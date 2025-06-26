@@ -133,7 +133,7 @@ def create_greeting_image(text, background_file, output_file):
     try:
         img = Image.open(background_file)
         draw = ImageDraw.Draw(img)
-        font = ImageFont.truetype(FONT_PATH, 100)
+        font = ImageFont.truetype(FONT_PATH, 95)
 
         x, y = 40, 570
         main_color = (255, 0, 0)          # красный основной текст
@@ -214,28 +214,47 @@ def handle_reroll_command(message):
             logging.info(f"Команда /reroll от {message.from_user.username or message.from_user.id}: {choice_name} {choice_emoji}")
     except Exception as e:
         logging.error(f"Ошибка в обработчике /reroll: {e}")
+        
+# Создаём списки фраз
+GOOD_MORNING_PHRASES = [
+    "Good morning Red Planet",
+    "Wake up, Legends!",
+    "It's time to do good",
+    "Good morning Purtoricans!",
+    "Happy new day, Red Planetians!"
+]
+
+GOOD_NIGHT_PHRASES = [
+    "Good night Red Planet",
+    "Until tomorrow, Legends!",
+    "The Red Planet guards your sleep!",
+    "Sleep tight, warrior of light",
+    "Sweet dreams, Purtorican"
+]
 
 # ==== ОБРАБОТЧИК КОМАНДЫ /gm ====
 @bot.message_handler(commands=['gm'])
 def handle_gm_command(message):
     try:
         if str(message.chat.id) == CHAT_ID:
-            if create_greeting_image("Good morning Red Planet ☀️", "morning.jpg", "gm_output.jpg"):
+            text = random.choice(GOOD_MORNING_PHRASES)
+            if create_greeting_image(text, "morning.jpg", "gm_output.jpg"):
                 with open("gm_output.jpg", "rb") as photo:
                     bot.send_photo(message.chat.id, photo, caption=f"Всем бодрого утра, друзья! ☕\nGood morning to all, friends! ☕")
-                logging.info(f"{message.from_user.username or message.from_user.id} использовал /gm")
+                logging.info(f"{message.from_user.username or message.from_user.id} использовал /gm: {text}")
     except Exception as e:
         logging.error(f"Ошибка в /gm: {e}")
 
-# ==== ОБРАБОТЧИК КОМАНДЫ /gn ====
+# ==== ОБРАБОТЧИК КОМАНДЫ /gn ====        
 @bot.message_handler(commands=['gn'])
 def handle_gn_command(message):
     try:
         if str(message.chat.id) == CHAT_ID:
-            if create_greeting_image("Good night Red Planet 🌙", "night.jpg", "gn_output.jpg"):
+            text = random.choice(GOOD_NIGHT_PHRASES)
+            if create_greeting_image(text, "night.jpg", "gn_output.jpg"):
                 with open("gn_output.jpg", "rb") as photo:
                     bot.send_photo(message.chat.id, photo, caption=f"Спокойной ночи, Легенды! 🌌\nGood night, Legends! 🌌")
-                logging.info(f"{message.from_user.username or message.from_user.id} использовал /gn")
+                logging.info(f"{message.from_user.username or message.from_user.id} использовал /gn: {text}")
     except Exception as e:
         logging.error(f"Ошибка в /gn: {e}")
 
