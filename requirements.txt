@@ -1,0 +1,7 @@
+python-telegram-bot==13.15
+pyTelegramBotAPI==4.15.4
+Pillow==10.3.0
+requests==2.31.0
+schedule==1.2.1
+python-dotenv==1.0.1
+psutil==5.9.8
