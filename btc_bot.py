@@ -121,6 +121,43 @@ def create_price_image(price):
         logging.error(f"Ошибка при создании изображения: {e}")
         return False
 
+def create_greeting_image(text, background_file, output_file):
+    if not os.path.exists(background_file):
+        logging.error(f"Файл фона {background_file} не найден.")
+        return False
+
+    if not os.path.exists(FONT_PATH):
+        logging.error("❌ Шрифт SpicyRice-Regular.ttf не найден.")
+        return False
+
+    try:
+        img = Image.open(background_file)
+        draw = ImageDraw.Draw(img)
+        font = ImageFont.truetype(FONT_PATH, 100)
+
+        x, y = 40, 570
+        main_color = (255, 0, 0)          # красный основной текст
+        shadow_color = (0, 0, 0)          # чёрная тень
+        outline_color = (255, 215, 0)     # золотой контур
+
+        # Тень
+        draw.text((x+4, y+4), text, font=font, fill=shadow_color)
+
+        # Контур
+        for dx in [-2, -1, 1, 2]:
+            for dy in [-2, -1, 1, 2]:
+                if dx != 0 or dy != 0:
+                    draw.text((x+dx, y+dy), text, font=font, fill=outline_color)
+
+        # Основной текст
+        draw.text((x, y), text, font=font, fill=main_color)
+
+        img.save(output_file)
+        return True
+    except Exception as e:
+        logging.error(f"Ошибка при создании поздравительной картинки: {e}")
+        return False
+
 # ==== ОТПРАВКА ИЗОБРАЖЕНИЯ ====
 def send_price_image():
     try:
@@ -177,6 +214,30 @@ def handle_reroll_command(message):
             logging.info(f"Команда /reroll от {message.from_user.username or message.from_user.id}: {choice_name} {choice_emoji}")
     except Exception as e:
         logging.error(f"Ошибка в обработчике /reroll: {e}")
+
+# ==== ОБРАБОТЧИК КОМАНДЫ /gm ====
+@bot.message_handler(commands=['gm'])
+def handle_gm_command(message):
+    try:
+        if str(message.chat.id) == CHAT_ID:
+            if create_greeting_image("Good morning Red Planet ☀️", "morning.jpg", "gm_output.jpg"):
+                with open("gm_output.jpg", "rb") as photo:
+                    bot.send_photo(message.chat.id, photo, caption=f"Всем бодрого утра, друзья! ☕\nGood morning to all, friends! ☕")
+                logging.info(f"{message.from_user.username or message.from_user.id} использовал /gm")
+    except Exception as e:
+        logging.error(f"Ошибка в /gm: {e}")
+
+# ==== ОБРАБОТЧИК КОМАНДЫ /gn ====
+@bot.message_handler(commands=['gn'])
+def handle_gn_command(message):
+    try:
+        if str(message.chat.id) == CHAT_ID:
+            if create_greeting_image("Good night Red Planet 🌙", "night.jpg", "gn_output.jpg"):
+                with open("gn_output.jpg", "rb") as photo:
+                    bot.send_photo(message.chat.id, photo, caption=f"Спокойной ночи, Легенды! 🌌\nGood night, Legends! 🌌")
+                logging.info(f"{message.from_user.username or message.from_user.id} использовал /gn")
+    except Exception as e:
+        logging.error(f"Ошибка в /gn: {e}")
 
 # ==== ЗАПУСК ====
 logging.info("Бот запущен. Ожидаем запуск каждые 4 часа и по команде /price...")
