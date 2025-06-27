@@ -12,11 +12,24 @@ from dotenv import load_dotenv
 import schedule
 import logging
 import threading
+import json
 
-# === Загрузка переменных окружения ===
+# === ЗАГРУЗКА ПЕРЕМЕННЫХ ОКРУЖЕНИЯ ===
 load_dotenv()
 
-# === Настройка логирования ===
+# === ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ ===
+TOKEN = os.getenv("TELEGRAM_TOKEN")
+CHAT_ID = str(os.getenv("CHAT_ID"))  # Приводим к строке для единообразия
+DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
+BACKGROUND_PATH = 'background.jpg'
+FONT_PATH = 'SpicyRice-Regular.ttf'
+
+# Проверка обязательных переменных
+if not TOKEN or not CHAT_ID:
+    logging.critical("TELEGRAM_TOKEN или CHAT_ID не заданы в переменных окружения.")
+    sys.exit(1)
+
+# === НАСТРОЙКИ ЛОГИРОВАНИЯ ===
 logging.basicConfig(
     level=logging.INFO,
     format='[%(asctime)s] [%(levelname)s] %(message)s',
@@ -48,18 +61,7 @@ if os.path.exists(LOCK_FILE):
 with open(LOCK_FILE, "w") as f:
     f.write(str(os.getpid()))
 
-# ==== НАСТРОЙКИ ====
-TOKEN = os.getenv("TELEGRAM_TOKEN")
-CHAT_ID = str(os.getenv("CHAT_ID"))  # Приводим к строке для единообразия
-BACKGROUND_PATH = 'background.jpg'
-FONT_PATH = 'SpicyRice-Regular.ttf'
-
-# Проверка обязательных переменных
-if not TOKEN or not CHAT_ID:
-    logging.critical("TELEGRAM_TOKEN или CHAT_ID не заданы в переменных окружения.")
-    sys.exit(1)
-
-# Инициализируем бота
+# Инициализируем клиента
 bot = telebot.TeleBot(TOKEN)
 
 # ==== ПОЛУЧЕНИЕ ЦЕНЫ ====
@@ -67,6 +69,9 @@ def get_btc_price():
     try:
         url = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd"
         response = requests.get(url, timeout=10)
+        if response.status_code != 200:
+            logging.error(f"Ошибка ответа CoinGecko: {response.status_code}")
+            return 0.0
         data = response.json()
         return round(data["bitcoin"]["usd"], 2)
     except Exception as e:
@@ -92,7 +97,7 @@ def create_price_image(price):
         now = datetime.datetime.now().strftime("%d.%m.%Y %H:%M")
         text = f"BTC\n${price}"
         
-		# Настройка шрифта
+        # Настройка шрифта
         font = ImageFont.truetype(FONT_PATH, 140)
         
         x, y = 35, 20  # Позиция текста
@@ -133,7 +138,7 @@ def create_greeting_image(text, background_file, output_file):
     try:
         img = Image.open(background_file)
         draw = ImageDraw.Draw(img)
-        font = ImageFont.truetype(FONT_PATH, 95)
+        font = ImageFont.truetype(FONT_PATH, 90)
 
         x, y = 40, 570
         main_color = (255, 0, 0)          # красный основной текст
@@ -158,6 +163,35 @@ def create_greeting_image(text, background_file, output_file):
         logging.error(f"Ошибка при создании поздравительной картинки: {e}")
         return False
 
+# ==== ПЕРЕСЫЛКА В DISCORD ====
+# Пересылка текстового сообщения
+def send_to_discord(text):
+    if not DISCORD_WEBHOOK_URL:
+        logging.warning("DISCORD_WEBHOOK_URL не задан")
+        return
+    try:
+        data = {"content": text}
+        response = requests.post(DISCORD_WEBHOOK_URL, json=data)
+        if response.status_code != 204:
+            logging.warning(f"Ошибка при отправке в Discord: {response.status_code} - {response.text}")
+    except Exception as e:
+        logging.error(f"Ошибка при пересылке в Discord: {e}")
+
+# Пересылка фото с подписью
+def send_photo_to_discord(caption, photo_path):
+    if not DISCORD_WEBHOOK_URL:
+        logging.warning("DISCORD_WEBHOOK_URL не задан")
+        return
+    try:
+        with open(photo_path, 'rb') as f:
+            files = {"file": f}
+            payload = {"content": caption or ""}
+            response = requests.post(DISCORD_WEBHOOK_URL, data=payload, files=files)
+            if response.status_code not in [200, 204]:
+                logging.warning(f"Ошибка при отправке фото в Discord: {response.status_code} - {response.text}")
+    except Exception as e:
+        logging.error(f"Ошибка при пересылке фото в Discord: {e}")
+
 # ==== ОТПРАВКА ИЗОБРАЖЕНИЯ ====
 def send_price_image():
     try:
@@ -171,15 +205,7 @@ def send_price_image():
                 bot.send_photo(CHAT_ID, photo, caption=f"Greetings Adventurers! Current #price $BTC: ${price}")
             logging.info("Сообщение отправлено.")
     except Exception as e:
-        logging.error("Ошибка при отправке: {e}")
-
-# ==== НАСТРОЙКА РАСПИСАНИЯ (1 раз в 4 часа) ====
-schedule.every(4).hours.do(send_price_image)
-
-def run_scheduler():
-    while True:
-        schedule.run_pending()
-        time.sleep(60)
+        logging.error(f"Ошибка при отправке: {e}")
 
 # ==== ОБРАБОТЧИК КОМАНДЫ /price ====
 @bot.message_handler(commands=['price'])
@@ -211,11 +237,11 @@ def handle_reroll_command(message):
             choice_name = options[choice_emoji]
 
             bot.reply_to(message, f"{choice_emoji}")
-            logging.info(f"Команда /reroll от {message.from_user.username or message.from_user.id}: {choice_name} {choice_emoji}")
+            logging.info(f"Команда /reroll от {message.from_user.username or message.from_user.id}: {choice_name}")
     except Exception as e:
         logging.error(f"Ошибка в обработчике /reroll: {e}")
         
-# Создаём списки фраз
+# ==== СОЗДАЁМ СПИСОК ФРАЗ ====
 GOOD_MORNING_PHRASES = [
     "Good morning Red Planet",
     "Wake up, Legends!",
@@ -257,6 +283,49 @@ def handle_gn_command(message):
                 logging.info(f"{message.from_user.username or message.from_user.id} использовал /gn: {text}")
     except Exception as e:
         logging.error(f"Ошибка в /gn: {e}")
+
+# === ПЕРЕСЫЛКА СООБЩЕНИЙ В DISCORD ===
+@bot.message_handler(func=lambda message: True, content_types=['text', 'photo'])
+def handle_all_messages(message):
+    if str(message.chat.id) != CHAT_ID:
+        return
+
+    if message.content_type == 'text':
+        # Имя пользователя для Discord:
+        user = message.from_user.full_name
+        if message.from_user.full_name:
+            user = message.from_user.full_name
+        elif message.from_user.username:
+            user = f"@{message.from_user.username}"
+        else:
+            user = "Unknown"
+        send_to_discord(f"**{user}**: {message.text}")
+
+    elif message.content_type == 'photo':
+        photo_path = "temp_photo.jpg"
+        try:
+            file_info = bot.get_file(message.photo[-1].file_id)
+            downloaded_file = bot.download_file(file_info.file_path)
+            with open(photo_path, 'wb') as f:
+                f.write(downloaded_file)
+
+            caption = message.caption or ""
+            user = message.from_user.username or message.from_user.first_name
+            full_caption = f"**{user}**: {caption}"
+            send_photo_to_discord(full_caption, photo_path)
+        except Exception as e:
+            logging.error(f"Ошибка при обработке фото: {e}")
+        finally:
+            if os.path.exists(photo_path):
+                os.remove(photo_path)
+
+# ==== НАСТРОЙКА РАСПИСАНИЯ (1 раз в 4 часа) ====
+schedule.every(4).hours.do(send_price_image)
+
+def run_scheduler():
+    while True:
+        schedule.run_pending()
+        time.sleep(60)
 
 # ==== ЗАПУСК ====
 logging.info("Бот запущен. Ожидаем запуск каждые 4 часа и по команде /price...")
