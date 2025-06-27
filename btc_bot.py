@@ -21,6 +21,7 @@ load_dotenv()
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = str(os.getenv("CHAT_ID"))  # Приводим к строке для единообразия
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
+DISCORD_AVATAR_URL = os.getenv("DISCORD_AVATAR_URL")
 BACKGROUND_PATH = 'background.jpg'
 FONT_PATH = 'SpicyRice-Regular.ttf'
 
@@ -165,32 +166,40 @@ def create_greeting_image(text, background_file, output_file):
 
 # ==== ПЕРЕСЫЛКА В DISCORD ====
 # Пересылка текстового сообщения
-def send_to_discord(text):
+def send_to_discord(text, username="RPDAO Telegram", avatar_url=None):
     if not DISCORD_WEBHOOK_URL:
         logging.warning("DISCORD_WEBHOOK_URL не задан")
         return
     try:
-        data = {"content": text}
-        response = requests.post(DISCORD_WEBHOOK_URL, json=data)
+        payload = {
+            "content": text,
+            "username": username,
+            "avatar_url": avatar_url or DEFAULT_AVATAR_URL         # путь к кастомной аватарке
+        }
+        response = requests.post(DISCORD_WEBHOOK_URL, json=payload)
         if response.status_code != 204:
-            logging.warning(f"Ошибка при отправке в Discord: {response.status_code} - {response.text}")
+            logging.warning(f"Ошибка отправки текста в Discord: {response.status_code} - {response.text}")
     except Exception as e:
-        logging.error(f"Ошибка при пересылке в Discord: {e}")
+        logging.error(f"Ошибка при отправке текста в Discord: {e}")
 
 # Пересылка фото с подписью
-def send_photo_to_discord(caption, photo_path):
+def send_photo_to_discord(caption, photo_path, username="RPDAO Telegram", avatar_url=None):
     if not DISCORD_WEBHOOK_URL:
         logging.warning("DISCORD_WEBHOOK_URL не задан")
         return
     try:
         with open(photo_path, 'rb') as f:
             files = {"file": f}
-            payload = {"content": caption or ""}
+            payload = {
+                "content": caption or "",
+                "username": username,
+                "avatar_url": avatar_url or DEFAULT_AVATAR_URL
+            }
             response = requests.post(DISCORD_WEBHOOK_URL, data=payload, files=files)
             if response.status_code not in [200, 204]:
-                logging.warning(f"Ошибка при отправке фото в Discord: {response.status_code} - {response.text}")
+                logging.warning(f"Ошибка отправки фото в Discord: {response.status_code} - {response.text}")
     except Exception as e:
-        logging.error(f"Ошибка при пересылке фото в Discord: {e}")
+        logging.error(f"Ошибка при отправке фото в Discord: {e}")
 
 # ==== ОТПРАВКА ИЗОБРАЖЕНИЯ ====
 def send_price_image():
@@ -290,16 +299,19 @@ def handle_all_messages(message):
     if str(message.chat.id) != CHAT_ID:
         return
 
+    # Получаем имя пользователя для отображения
+    if message.from_user.full_name:
+        user_display = message.from_user.full_name
+    elif message.from_user.username:
+        user_display = f"@{message.from_user.username}"
+    else:
+        user_display = "Unknown"
+
+    # Аватарка (одна общая кастомная)
+    avatar_url = DISCORD_AVATAR_URL
+
     if message.content_type == 'text':
-        # Имя пользователя для Discord:
-        user = message.from_user.full_name
-        if message.from_user.full_name:
-            user = message.from_user.full_name
-        elif message.from_user.username:
-            user = f"@{message.from_user.username}"
-        else:
-            user = "Unknown"
-        send_to_discord(f"**{user}**: {message.text}")
+        send_to_discord(f"{message.text}", username=user_display, avatar_url=avatar_url)
 
     elif message.content_type == 'photo':
         photo_path = "temp_photo.jpg"
@@ -310,9 +322,8 @@ def handle_all_messages(message):
                 f.write(downloaded_file)
 
             caption = message.caption or ""
-            user = message.from_user.username or message.from_user.first_name
-            full_caption = f"**{user}**: {caption}"
-            send_photo_to_discord(full_caption, photo_path)
+            full_caption = f"{caption}"
+            send_photo_to_discord(full_caption, photo_path, username=user_display, avatar_url=avatar_url)
         except Exception as e:
             logging.error(f"Ошибка при обработке фото: {e}")
         finally:
