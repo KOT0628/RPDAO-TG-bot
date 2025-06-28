@@ -30,6 +30,10 @@ if not TOKEN or not CHAT_ID:
     logging.critical("TELEGRAM_TOKEN или CHAT_ID не заданы в переменных окружения.")
     sys.exit(1)
 
+# Проверяем наличие папки temp, если нет — создаём
+TEMP_DIR = "temp"
+os.makedirs(TEMP_DIR, exist_ok=True)
+
 # === НАСТРОЙКИ ЛОГИРОВАНИЯ ===
 logging.basicConfig(
     level=logging.INFO,
@@ -39,6 +43,20 @@ logging.basicConfig(
         logging.StreamHandler()
     ]
 )
+
+# Очистка файла логов
+LOG_FILE = "logs.txt"
+
+def clear_log_file():
+    try:
+        with open(LOG_FILE, "w") as f:
+            f.truncate(0)
+        logging.info("Файл логов успешно очищен.")
+    except Exception as e:
+        logging.error(f"Ошибка при очистке файла логов: {e}")
+
+# Каждые 3 дня выполнять очистку логов
+schedule.every(3).days.do(clear_log_file)
 
 # ==== БЛОКИРОВКА ЗАПУСКА ====
 LOCK_FILE = "bot.lock"
@@ -111,13 +129,13 @@ def create_price_image(price):
         # Рисуем ТЕНЬ (смещённый текст)
         draw.text((x+4, y+4), text, font=font, fill=shadow_color)
         
-		# Рисуем КОНТУР (обводку) — вокруг текста
+        # Рисуем КОНТУР (обводку) — вокруг текста
         for dx in [-2, -1, 1, 2]:
             for dy in [-2, -1, 1, 2]:
                 if dx != 0 or dy != 0:
                     draw.text((x+dx, y+dy), text, font=font, fill=outline_color)
         
-		# Рисуем САМ ТЕКСТ
+        # Рисуем САМ ТЕКСТ
         draw.text((x, y), text, font=font, fill=main_color)
 
         # Сохраняем результат
@@ -174,7 +192,7 @@ def send_to_discord(text, username="RPDAO Telegram", avatar_url=None):
         payload = {
             "content": text,
             "username": username,
-            "avatar_url": avatar_url or DEFAULT_AVATAR_URL         # путь к кастомной аватарке
+            "avatar_url": avatar_url or DISCORD_AVATAR_URL         # путь к кастомной аватарке
         }
         response = requests.post(DISCORD_WEBHOOK_URL, json=payload)
         if response.status_code != 204:
@@ -193,7 +211,7 @@ def send_photo_to_discord(caption, photo_path, username="RPDAO Telegram", avatar
             payload = {
                 "content": caption or "",
                 "username": username,
-                "avatar_url": avatar_url or DEFAULT_AVATAR_URL
+                "avatar_url": avatar_url or DISCORD_AVATAR_URL
             }
             response = requests.post(DISCORD_WEBHOOK_URL, data=payload, files=files)
             if response.status_code not in [200, 204]:
@@ -314,7 +332,7 @@ def handle_all_messages(message):
         send_to_discord(f"{message.text}", username=user_display, avatar_url=avatar_url)
 
     elif message.content_type == 'photo':
-        photo_path = "temp_photo.jpg"
+        photo_path = os.path.join(TEMP_DIR, "temp_photo.jpg")
         try:
             file_info = bot.get_file(message.photo[-1].file_id)
             downloaded_file = bot.download_file(file_info.file_path)
