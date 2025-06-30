@@ -8,11 +8,15 @@ import datetime
 import time
 import telebot
 from requests.exceptions import ReadTimeout
+from telebot.types import Message
+from discord_webhook import DiscordWebhook
 from dotenv import load_dotenv
 import schedule
 import logging
 import threading
 import json
+import tempfile
+import uuid
 
 # === ЗАГРУЗКА ПЕРЕМЕННЫХ ОКРУЖЕНИЯ ===
 load_dotenv()
@@ -201,21 +205,23 @@ def send_to_discord(text, username="RPDAO Telegram", avatar_url=None):
         logging.error(f"Ошибка при отправке текста в Discord: {e}")
 
 # Пересылка фото с подписью
-def send_photo_to_discord(caption, photo_path, username="RPDAO Telegram", avatar_url=None):
-    if not DISCORD_WEBHOOK_URL:
-        logging.warning("DISCORD_WEBHOOK_URL не задан")
-        return
+def send_photo_to_discord(caption, photo_path, username=None, avatar_url=None):
     try:
+        webhook = DiscordWebhook(
+            url=DISCORD_WEBHOOK_URL,
+            content=caption,
+            username=username or "Telegram",
+            avatar_url=avatar_url or DISCORD_AVATAR_URL
+        )
         with open(photo_path, 'rb') as f:
-            files = {"file": f}
-            payload = {
-                "content": caption or "",
-                "username": username,
-                "avatar_url": avatar_url or DISCORD_AVATAR_URL
-            }
-            response = requests.post(DISCORD_WEBHOOK_URL, data=payload, files=files)
-            if response.status_code not in [200, 204]:
-                logging.warning(f"Ошибка отправки фото в Discord: {response.status_code} - {response.text}")
+            webhook.add_file(file=f.read(), filename="photo.jpg")
+
+        response = webhook.execute()
+        logging.info(f"[DC] Фото отправлено. Статус: {response.status_code}")
+
+        if response.status_code not in [200, 204]:
+            logging.warning(f"Ошибка отправки фото в Discord: {response.status_code} - {response.text}")
+
     except Exception as e:
         logging.error(f"Ошибка при отправке фото в Discord: {e}")
 
@@ -250,24 +256,62 @@ def handle_price_command(message):
     except Exception as e:
         logging.error(f"Ошибка в обработчике /price: {e}")
 
+# === ПАМЯТЬ ДЛЯ ИГРЫ ===
+game_state = {}                                             # Храним одного игрока
+CHOICES = {
+    '🪨': 'Камень',
+    '✂️': 'Ножницы',
+    '📄': 'Бумага'
+}
+BEATS = {
+    '🪨': '✂️',
+    '✂️': '📄',
+    '📄': '🪨'
+}
+
 # ==== ОБРАБОТЧИК КОМАНДЫ /reroll ====
 @bot.message_handler(commands=['reroll'])
 def handle_reroll_command(message):
     try:
-        if str(message.chat.id) == CHAT_ID:
-            options = {
-                '🪨': 'Камень',
-                '✂️': 'Ножницы',
-                '📄': 'Бумага'
-            }
-            choice_emoji = random.choice(list(options.keys()))
-            choice_name = options[choice_emoji]
+        if str(message.chat.id) != CHAT_ID:
+            return
 
-            bot.reply_to(message, f"{choice_emoji}")
-            logging.info(f"Команда /reroll от {message.from_user.username or message.from_user.id}: {choice_name}")
+        user_id = message.from_user.id
+        display_name = message.from_user.first_name or "Игрок"
+
+        emoji = random.choice(list(CHOICES.keys()))
+        name = CHOICES[emoji]
+
+        # Первый игрок
+        if not game_state:
+            game_state[user_id] = (name, emoji, display_name)
+            bot.reply_to(message, f"{emoji}\n\nЖдём второго игрока...")
+            return
+
+        # Если второй игрок — сравнение
+        for opponent_id, (opp_name, opp_emoji, opp_display) in game_state.items():
+            if opponent_id == user_id:
+                bot.reply_to(message, "⛔ Вы уже сыграли. Ждём другого игрока.")
+                return
+
+            # Второй игрок сыграл
+            game_state.clear()
+
+            result = f"{opp_display} {opp_emoji}\n\n{emoji} {display_name}\n\n"
+
+            if emoji == opp_emoji:
+                result += "🤝 Ничья!"
+            elif BEATS[emoji] == opp_emoji:
+                result += f"🎉 Победил {display_name}!"
+            else:
+                result += f"🎉 Победил {opp_display}!"
+
+            bot.send_message(message.chat.id, result)
+            return
     except Exception as e:
-        logging.error(f"Ошибка в обработчике /reroll: {e}")
-        
+        logging.error(f"Ошибка в /reroll: {e}")
+
+
 # ==== СОЗДАЁМ СПИСОК ФРАЗ ====
 GOOD_MORNING_PHRASES = [
     "Good morning Red Planet",
@@ -328,25 +372,43 @@ def handle_all_messages(message):
     # Аватарка (одна общая кастомная)
     avatar_url = DISCORD_AVATAR_URL
 
-    if message.content_type == 'text':
-        send_to_discord(f"{message.text}", username=user_display, avatar_url=avatar_url)
+    # Проверка, является ли сообщение ответом
+    if message.reply_to_message:
+        reply_author = message.reply_to_message.from_user.full_name or "Unknown"
+        reply_text = message.reply_to_message.text or message.reply_to_message.caption or "<медиа>"
+        quoted = f"Ответ на сообщение от **{reply_author}**:\n> {reply_text}\n\n"
+    else:
+        quoted = ""
 
+    # Обработка текстового сообщения
+    if message.content_type == 'text':
+        full_text = f"{quoted} {message.text}"
+        send_to_discord(full_text, username=user_display, avatar_url=avatar_url)
+
+    # Обработка фото
     elif message.content_type == 'photo':
-        photo_path = os.path.join(TEMP_DIR, "temp_photo.jpg")
         try:
             file_info = bot.get_file(message.photo[-1].file_id)
             downloaded_file = bot.download_file(file_info.file_path)
-            with open(photo_path, 'wb') as f:
-                f.write(downloaded_file)
+
+            # Создаём временный файл и сохраняем туда фото
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp_file:
+                tmp_file.write(downloaded_file)
+                temp_path = tmp_file.name
 
             caption = message.caption or ""
-            full_caption = f"{caption}"
-            send_photo_to_discord(full_caption, photo_path, username=user_display, avatar_url=avatar_url)
+            full_caption = f"{quoted} {caption}"
+            send_photo_to_discord(full_caption, temp_path, username=user_display, avatar_url=avatar_url)
+
         except Exception as e:
             logging.error(f"Ошибка при обработке фото: {e}")
+
         finally:
-            if os.path.exists(photo_path):
-                os.remove(photo_path)
+            try:
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+            except Exception as e:
+                logging.warning(f"❗ Не удалось удалить временный файл: {e}")
 
 # ==== НАСТРОЙКА РАСПИСАНИЯ (1 раз в 4 часа) ====
 schedule.every(4).hours.do(send_price_image)
@@ -357,7 +419,7 @@ def run_scheduler():
         time.sleep(60)
 
 # ==== ЗАПУСК ====
-logging.info("Бот запущен. Ожидаем запуск каждые 4 часа и по команде /price...")
+logging.info("Бот запущен.")
 
 # Поток для schedule
 threading.Thread(target=run_scheduler, daemon=True).start()
