@@ -9,6 +9,8 @@ import time
 import telebot
 from requests.exceptions import ReadTimeout
 from telebot.types import Message
+from collections import defaultdict
+from threading import Timer
 from discord_webhook import DiscordWebhook
 from dotenv import load_dotenv
 import schedule
@@ -23,7 +25,7 @@ load_dotenv()
 
 # === ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ ===
 TOKEN = os.getenv("TELEGRAM_TOKEN")
-CHAT_ID = str(os.getenv("CHAT_ID"))  # Приводим к строке для единообразия
+CHAT_ID = str(os.getenv("CHAT_ID"))
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 DISCORD_AVATAR_URL = os.getenv("DISCORD_AVATAR_URL")
 BACKGROUND_PATH = 'background.jpg'
@@ -64,6 +66,24 @@ schedule.every(3).days.do(clear_log_file)
 
 # ==== БЛОКИРОВКА ЗАПУСКА ====
 LOCK_FILE = "bot.lock"
+
+# ==== ТАБЛИЦА ЛИДЕРОВ ====
+SCORE_FILE = "scores.json"
+
+# Загружаем счёт
+def load_scores():
+    if os.path.exists(SCORE_FILE):
+        with open(SCORE_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {}
+
+# Сохраняем счёт
+def save_scores(scores):
+    with open(SCORE_FILE, "w", encoding="utf-8") as f:
+        json.dump(scores, f, ensure_ascii=False, indent=2)
+
+# Глобальная таблица очков
+scores = load_scores()
 
 def is_process_running(pid):
     return psutil.pid_exists(pid)
@@ -256,6 +276,114 @@ def handle_price_command(message):
     except Exception as e:
         logging.error(f"Ошибка в обработчике /price: {e}")
 
+# ==== ЗАПУСК РАУНДА ROLL ====
+roll_round_active = False
+roll_results = {}  # user_id: (score, display_name, username)
+roll_timer = None
+
+def start_roll_round(chat_id):
+    global roll_round_active, roll_results, roll_timer
+
+    if roll_round_active:
+        return False                                        # Раунд уже идёт
+
+    roll_round_active = True
+    roll_results = {}
+    roll_timer = Timer(120, finish_roll_round)              # 2 минуты
+    roll_timer.start()
+
+    bot.send_message(chat_id, "🎲 Раунд начался! Используйте /roll, чтобы бросить число от 0 до 100. У вас 2 минуты!")
+    return True
+
+# ==== ОБРАБОТЧИК КОМАНДЫ /start_roll ====
+@bot.message_handler(commands=['start_roll'])
+def handle_start_roll(message):
+    if str(message.chat.id) != CHAT_ID:
+        return
+
+    user_id = message.from_user.id
+    username = message.from_user.username or str(user_id)
+
+    # Проверка: только админ может стартовать
+    try:
+        member = bot.get_chat_member(message.chat.id, user_id)
+        if not (member.status in ['administrator', 'creator']):
+            bot.reply_to(message, "⛔ Только администратор может запустить раунд.")
+            return
+    except Exception as e:
+        logging.error(f"Ошибка при проверке прав администратора: {e}")
+        bot.reply_to(message, "❌ Не удалось проверить права.")
+        return
+
+    # Запускаем раунд
+    if start_roll_round(message.chat.id):
+        logging.info(f"{username} запустил раунд через /start_roll")
+    else:
+        bot.reply_to(message, "⚠️ Раунд уже запущен.")
+
+# ==== ОБРАБОТЧИК КОМАНДЫ /roll ====
+@bot.message_handler(commands=['roll'])
+def handle_roll_command(message):
+    global roll_round_active, roll_results
+
+    if str(message.chat.id) != CHAT_ID:
+        return
+
+    user_id = message.from_user.id
+    display_name = message.from_user.first_name or "Игрок"
+    username = message.from_user.username or str(user_id)
+
+    # Старт раунда, если он не начат
+    if not roll_round_active:
+        bot.reply_to(message, "⚠️ Раунд не начался. Ожидайте запуска от администратора.")
+        return
+
+    # Игрок уже бросал
+    if str(user_id) in roll_results:
+        bot.reply_to(message, "⛔ Вы уже бросили число в этом раунде.")
+        return
+
+    # Генерация числа
+    score = random.randint(0, 100)
+    roll_results[str(user_id)] = (score, display_name, username)
+    bot.reply_to(message, f"🎲 {score}")
+    logging.info(f"{username} использовал /roll: {score}")
+
+# ==== Завершение раунда Roll ====
+def finish_roll_round():
+    global roll_round_active, roll_results
+
+    if not roll_results:
+        bot.send_message(CHAT_ID, "⏱ В раунде /roll не было участников.")
+        roll_round_active = False
+        return
+
+    # Ищем наибольшее число
+    max_score = max(score for score, _, _ in roll_results.values())
+    winners = [(uid, name, username) for uid, (score, name, username) in roll_results.items() if score == max_score]
+
+    if len(winners) == 1:
+        # Победитель один
+        winner_id, winner_name, winner_username = winners[0]
+        scores[str(winner_id)] = scores.get(str(winner_id), 0) + 1
+        save_scores(scores)
+        bot.send_message(CHAT_ID, f"🏆 Победитель раунда: {winner_name} с результатом {max_score}!")
+        logging.info(f"Победитель /roll: {winner_username} ({winner_id}) ({max_score})")
+    else:
+        winner_names = [name for _, name, _ in winners]
+        winner_usernames = [username for _, _, username in winners]
+
+        # Ничья
+        bot.send_message(
+            CHAT_ID,
+            f"🤝 Ничья между: {', '.join(winner_names)} с результатом {max_score}!\n\nИспользуйте /reroll, чтобы определить победителя."
+        )
+        logging.info(f"Ничья в /roll между: {', '.join(winner_usernames)} ({max_score})")
+
+    # Сброс раунда
+    roll_results.clear()
+    roll_round_active = False
+
 # === ПАМЯТЬ ДЛЯ ИГРЫ ===
 game_state = {}                                             # Храним одного игрока
 CHOICES = {
@@ -280,7 +408,10 @@ def handle_reroll_command(message):
         display_name = message.from_user.first_name or "Игрок"
 
         emoji = random.choice(list(CHOICES.keys()))
-        name = CHOICES[emoji]
+        name = CHOICES[emoji]                               # Название выбора
+        
+        # [лог] Первый игрок бросил
+        logging.info(f"{message.from_user.username or message.from_user.id} бросил: {name}")
 
         # Первый игрок
         if not game_state:
@@ -294,6 +425,10 @@ def handle_reroll_command(message):
                 bot.reply_to(message, "⛔ Вы уже сыграли. Ждём другого игрока.")
                 return
 
+            # [лог] Второй игрок бросил
+            logging.info(f"{message.from_user.username or message.from_user.id} бросил: {name}")
+            logging.info(f"{message.from_user.username or message.from_user.id} бросил: {opp_name}")
+            
             # Второй игрок сыграл
             game_state.clear()
 
@@ -301,16 +436,47 @@ def handle_reroll_command(message):
 
             if emoji == opp_emoji:
                 result += "🤝 Ничья!"
+                logging.info("Результат игры: Ничья!")
             elif BEATS[emoji] == opp_emoji:
                 result += f"🎉 Победил {display_name}!"
+                scores[str(user_id)] = scores.get(str(user_id), 0) + 1
+                save_scores(scores)
+                logging.info(f"Победитель: {message.from_user.username or message.from_user.id}")
             else:
                 result += f"🎉 Победил {opp_display}!"
+                scores[str(opponent_id)] = scores.get(str(opponent_id), 0) + 1
+                save_scores(scores)
+                logging.info(f"Победитель: {message.from_user.username or message.from_user.id}")
 
             bot.send_message(message.chat.id, result)
             return
     except Exception as e:
         logging.error(f"Ошибка в /reroll: {e}")
 
+# ==== ОБРАБОТЧИК КОМАНДЫ /score ====
+@bot.message_handler(commands=['score'])
+def handle_score_command(message):
+    try:
+        if not scores:
+            bot.reply_to(message, "🏆 Ещё нет победителей.")
+            return
+
+        # Сортировка по убыванию очков
+        sorted_scores = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+        top = sorted_scores[:5]
+
+        text = "🏆 Топ игроков:\n"
+        for i, (user_id, points) in enumerate(top, 1):
+            try:
+                user = bot.get_chat_member(message.chat.id, int(user_id)).user
+                name = user.first_name or f"ID:{user_id}"
+            except:
+                name = f"ID:{user_id}"
+            text += f"{i}. {name} - {points} очк.\n"
+
+        bot.reply_to(message, text)
+    except Exception as e:
+        logging.error(f"Ошибка в /score: {e}")
 
 # ==== СОЗДАЁМ СПИСОК ФРАЗ ====
 GOOD_MORNING_PHRASES = [
