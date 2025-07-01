@@ -413,8 +413,6 @@ def handle_trivia_stop(message):
 def handle_text_messages(message):
     global trivia_active, current_trivia, hint_timer
 
-    logging.info(f"[ALL_MSG] Текст от {message.from_user.username or message.from_user.id}")
-    
     if str(message.chat.id) != CHAT_ID:
         return
 
@@ -570,9 +568,10 @@ def finish_roll_round():
             CHAT_ID,
             f"🤝 Tie between: {', '.join(mentions)} with score {max_score}!\n\n/reroll enabled for tie-breaker.\n🤝 Ничья между: {', '.join(mentions)} с результатом {max_score}!\n\n/reroll включён для определения победителя."
         )
+        global reroll_enabled, reroll_temp_players
         reroll_enabled = True
         reroll_temp_players = set(int(uid) for uid, _, _ in winners)
-        logging.info(f"Ничья в /roll между: {', '.join(winner_usernames)} ({max_score})")
+        logging.info(f"Ничья в /roll между: {', '.join(mentions)} ({max_score})")
 
         # Автоматическое удаление сообщения через 1 минуту
         threading.Timer(60, lambda: safe_delete_message(CHAT_ID, msg.message_id)).start()
@@ -652,8 +651,13 @@ def handle_reroll_command(message):
         display_name = message.from_user.first_name or "Игрок"
         mention = f"@{username}" if username else display_name
 
-        if not reroll_enabled and user_id not in reroll_temp_players:
-            msg = bot.reply_to(message, f"⛔ The /reroll command is temporarily disabled.\n⛔ Команда /reroll временно отключена.")
+        if not reroll_enabled:
+            msg = bot.reply_to(message, f"⛔ The /reroll command is disabled.\n⛔ Команда /reroll отключена.")
+            threading.Timer(30, lambda: safe_delete_message(message.chat.id, msg.message_id)).start()
+            return
+
+        if user_id not in reroll_temp_players:
+            msg = bot.reply_to(message, f"⛔ Only participants of the tie can use /reroll.\n⛔ Только участники ничьей могут использовать /reroll.")
             threading.Timer(30, lambda: safe_delete_message(message.chat.id, msg.message_id)).start()
             return
 
@@ -790,8 +794,6 @@ def handle_gn_command(message):
 # Обработка фото
 @bot.message_handler(content_types=['photo'])
 def handle_photo_message(message):
-    logging.info(f"[ALL_MSG] Фото от {message.from_user.username or message.from_user.id}")
-
     if str(message.chat.id) != CHAT_ID:
         return
 
