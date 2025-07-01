@@ -1,1 +1,1 @@
-worker: python btc_bot3.py
+worker: python btc_bot.py
