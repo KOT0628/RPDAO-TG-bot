@@ -100,6 +100,9 @@ if os.path.exists(LOCK_FILE):
         except ValueError:
             logging.warning("Поврежденный lock-файл. Продолжаем.")
 
+# ==== СПИСОК ВОПРОСВ TRIVIA ====
+TRIVIA_FILE = "trivia_questions.txt"
+
 # Пишем текущий PID в файл
 with open(LOCK_FILE, "w") as f:
     f.write(str(os.getpid()))
@@ -209,6 +212,7 @@ def create_greeting_image(text, background_file, output_file):
 # ==== ПЕРЕСЫЛКА В DISCORD ====
 # Пересылка текстового сообщения
 def send_to_discord(text, username="RPDAO Telegram", avatar_url=None):
+    logging.info(f"[DC] Отправка текста в Discord: {text}")
     if not DISCORD_WEBHOOK_URL:
         logging.warning("DISCORD_WEBHOOK_URL не задан")
         return
@@ -226,6 +230,7 @@ def send_to_discord(text, username="RPDAO Telegram", avatar_url=None):
 
 # Пересылка фото с подписью
 def send_photo_to_discord(caption, photo_path, username=None, avatar_url=None):
+    logging.info(f"[DC] Отправка фото в Discord с подписью: {caption}")
     try:
         webhook = DiscordWebhook(
             url=DISCORD_WEBHOOK_URL,
@@ -245,6 +250,13 @@ def send_photo_to_discord(caption, photo_path, username=None, avatar_url=None):
     except Exception as e:
         logging.error(f"Ошибка при отправке фото в Discord: {e}")
 
+# === БЕЗОПАСНОЕ УДАЛЕНИЕ СООБЩЕНИЙ ===
+def safe_delete_message(chat_id, message_id):
+    try:
+        bot.delete_message(chat_id, message_id)
+    except Exception as e:
+        logging.warning(f"Не удалось удалить сообщение {message_id} из чата {chat_id}: {e}")
+
 # ==== ОТПРАВКА ИЗОБРАЖЕНИЯ ====
 def send_price_image():
     try:
@@ -260,9 +272,19 @@ def send_price_image():
     except Exception as e:
         logging.error(f"Ошибка при отправке: {e}")
 
+# === УДАЛЕНИЕ СЛЭШ-КОМАНД ===
+def delete_command_after(func):
+    def wrapper(message):
+        try:
+            func(message)
+        finally:
+            threading.Timer(5, lambda: bot.delete_message(message.chat.id, message.message_id)).start()
+    return wrapper
+
 # ==== ОБРАБОТЧИК КОМАНДЫ /price ====
 @bot.message_handler(commands=['price'])
-def handle_price_command(message):
+@delete_command_after
+def handle_price_command(message):    
     try:
         if str(message.chat.id) == CHAT_ID:
             price = get_btc_price()
@@ -275,6 +297,163 @@ def handle_price_command(message):
                 logging.info(f"{message.from_user.username or message.from_user.id} использовал команду /price. Цена BTC: ${price}")
     except Exception as e:
         logging.error(f"Ошибка в обработчике /price: {e}")
+
+# === ДОБАВЛЯЕМ ВИКТОРИНУ TRIVIA ===
+trivia_active = False
+current_trivia = None
+current_mask = None
+hint_index = 0
+hint_timer = None
+
+# Загружаем список вопросов
+def load_trivia_questions():
+    if os.path.exists(TRIVIA_FILE):
+        with open(TRIVIA_FILE, "r", encoding="utf-8") as f:
+            questions = [line.strip() for line in f if line.strip() and ':' in line]
+        return [tuple(q.split(':', 1)) for q in questions]
+    return []
+
+trivia_questions = load_trivia_questions()
+
+# Отправка следующего вопроса
+def start_next_trivia():
+    global current_trivia, current_mask, hint_index
+
+    if not trivia_questions:
+        msg = bot.send_message(CHAT_ID, f"❌ The list of questions is empty.\n❌ Список вопросов пуст.")
+        threading.Timer(30, lambda: safe_delete_message(message.chat.id, msg.message_id)).start()
+        return
+
+    current_trivia = random.choice(trivia_questions)
+    question, answer = current_trivia
+    current_mask = ['-' for _ in answer]
+    hint_index = 0
+
+    bot.send_message(CHAT_ID, f"🧠 Trivia started! {question}\n🧠 Викторина началась! {question}")
+    schedule_hint()
+
+# Подсказки
+def schedule_hint():
+    global hint_timer
+    hint_timer = Timer(15, send_hint)
+    hint_timer.start()
+
+def send_hint():
+    global hint_index
+    question, answer = current_trivia
+
+    while hint_index < len(answer):
+        if current_mask[hint_index] == '-':
+            current_mask[hint_index] = answer[hint_index]
+            break
+        hint_index += 1
+
+    bot.send_message(CHAT_ID, f"🕵️‍♂️ Hint: {''.join(current_mask)}\n🕵️‍♂️ Подсказка: {''.join(current_mask)}")
+
+    if '-' in current_mask:
+        schedule_hint()
+    else:
+        bot.send_message(CHAT_ID, f"❌ No one guessed it! The answer was: {answer}\n❌ Никто не угадал! Ответ был: {answer}")
+        start_next_trivia()
+
+# === ЗАПУСК ВИКТОРИНЫ (только админ) ===
+@bot.message_handler(commands=['rpdao_trivia'])
+@delete_command_after
+def handle_trivia_start(message):
+    global trivia_active
+    if str(message.chat.id) != CHAT_ID:
+        return
+    user_id = message.from_user.id
+    try:
+        member = bot.get_chat_member(message.chat.id, user_id)
+        if not (member.status in ['administrator', 'creator']):
+            msg = bot.reply_to(message, f"⛔ Only an administrator can start a Trivia.\n⛔ Только администратор может запустить викторину.")
+            threading.Timer(30, lambda: safe_delete_message(message.chat.id, msg.message_id)).start()
+            return
+    except:
+        return
+
+    if trivia_active:
+        msg = bot.send_message(CHAT_ID, f"⚠️ The Trivia has already been launched.\n⚠️ Викторина уже запущена.")
+        threading.Timer(30, lambda: safe_delete_message(message.chat.id, msg.message_id)).start()
+        return
+
+    trivia_active = True
+    bot.send_message(CHAT_ID, f"🔎 The Trivia has started! Get ready to answer!\n🔎 Викторина запущена! Готовьтесь отвечать!")
+    start_next_trivia()
+
+# === ОСТАНОВКА ВИКТОРИНЫ (только админ) ===
+@bot.message_handler(commands=['rpdao_trivia_off'])
+@delete_command_after
+def handle_trivia_stop(message):
+    global trivia_active, current_trivia, current_mask, hint_index, hint_timer
+    if str(message.chat.id) != CHAT_ID:
+        return
+    user_id = message.from_user.id
+    try:
+        member = bot.get_chat_member(message.chat.id, user_id)
+        if not (member.status in ['administrator', 'creator']):
+            msg = bot.reply_to(message, f"⛔ Only an administrator can start a Trivia.\n⛔ Только администратор может остановить викторину.")
+            threading.Timer(30, lambda: safe_delete_message(message.chat.id, msg.message_id)).start()
+            return
+    except:
+        return
+
+    trivia_active = False
+    current_trivia = None
+    current_mask = None
+    hint_index = 0
+    if hint_timer:
+        hint_timer.cancel()
+
+    bot.send_message(CHAT_ID, f"🛑 The Trivia has been stopped.\n🛑 Викторина остановлена.")
+
+# === ОБРАБОТКА ОТВЕТОВ TRIVIA ===
+@bot.message_handler(func=lambda m: m.text and not m.text.startswith('/'), content_types=['text'])
+def handle_text_messages(message):
+    global trivia_active, current_trivia, hint_timer
+
+    logging.info(f"[ALL_MSG] Текст от {message.from_user.username or message.from_user.id}")
+    
+    if str(message.chat.id) != CHAT_ID:
+        return
+
+    # === 1. TRIVIA логика ===
+    if trivia_active and current_trivia:
+        answer = current_trivia[1].strip().lower()
+        if message.text.strip().lower() == answer:
+            if hint_timer:
+                hint_timer.cancel()
+            user_id = message.from_user.id
+            display_name = message.from_user.first_name or "Игрок"
+
+            scores[str(user_id)] = scores.get(str(user_id), 0) + 5
+            save_scores(scores)
+
+            bot.send_message(CHAT_ID, f"🎉 {display_name} guessed the word '{answer}' and gets 5 $LEG!\n🎉 {display_name} угадал слово '{answer}' и получает 5 $LEG!")
+            logging.info(f"Победитель викторины: {message.from_user.username or message.from_user.id}, +5 очков")
+
+            start_next_trivia()
+            return                                                 # Остановим дальнейшую обработку
+
+    # === 2. Пересылка текста в Discord ===
+	# Обработка обычных текстовых сообщений (не команд)
+    # Получаем имя пользователя для отображения
+    user_display = message.from_user.full_name or f"@{message.from_user.username}" if message.from_user.username else "Unknown"
+    
+	# Аватарка (одна общая кастомная)
+    avatar_url = DISCORD_AVATAR_URL
+
+    # Проверка, является ли сообщение ответом
+    if message.reply_to_message:
+        reply_author = message.reply_to_message.from_user.full_name or "Unknown"
+        reply_text = message.reply_to_message.text or message.reply_to_message.caption or "<медиа>"
+        quoted = f"Ответ на сообщение от **{reply_author}**:\n> {reply_text}\n\n"
+    else:
+        quoted = ""
+
+    full_text = f"{quoted}{message.text}"
+    send_to_discord(full_text, username=user_display, avatar_url=avatar_url)
 
 # ==== ЗАПУСК РАУНДА ROLL ====
 roll_round_active = False
@@ -297,6 +476,7 @@ def start_roll_round(chat_id):
 
 # ==== ОБРАБОТЧИК КОМАНДЫ /start_roll ====
 @bot.message_handler(commands=['start_roll'])
+@delete_command_after
 def handle_start_roll(message):
     if str(message.chat.id) != CHAT_ID:
         return
@@ -308,21 +488,25 @@ def handle_start_roll(message):
     try:
         member = bot.get_chat_member(message.chat.id, user_id)
         if not (member.status in ['administrator', 'creator']):
-            bot.reply_to(message, f"⛔ Only the administrator can start a round.\n⛔ Только администратор может запустить раунд.")
+            msg = bot.reply_to(message, f"⛔ Only the administrator can start a round.\n⛔ Только администратор может запустить раунд.")
+            threading.Timer(30, lambda: safe_delete_message(message.chat.id, msg.message_id)).start()
             return
     except Exception as e:
         logging.error(f"Ошибка при проверке прав администратора: {e}")
-        bot.reply_to(message, f"❌ Unable to verify rights.\n❌ Не удалось проверить права.")
+        msg = bot.reply_to(message, f"❌ Unable to verify rights.\n❌ Не удалось проверить права.")
+        threading.Timer(30, lambda: safe_delete_message(message.chat.id, msg.message_id)).start()
         return
 
     # Запускаем раунд
     if start_roll_round(message.chat.id):
         logging.info(f"{username} запустил раунд через /start_roll")
     else:
-        bot.reply_to(message, f"⚠️ The round has already been launched.\n⚠️ Раунд уже запущен.")
+        msg = bot.reply_to(message, f"⚠️ The round has already been launched.\n⚠️ Раунд уже запущен.")
+        threading.Timer(30, lambda: safe_delete_message(message.chat.id, msg.message_id)).start()
 
 # ==== ОБРАБОТЧИК КОМАНДЫ /roll ====
 @bot.message_handler(commands=['roll'])
+@delete_command_after
 def handle_roll_command(message):
     global roll_round_active, roll_results
 
@@ -335,19 +519,24 @@ def handle_roll_command(message):
 
     # Старт раунда, если он не начат
     if not roll_round_active:
-        bot.reply_to(message, f"⚠️ Round has not started. Wait for the administrator to start it.\n⚠️ Раунд не начался. Ожидайте запуска от администратора.")
+        msg = bot.reply_to(message, f"⚠️ Round has not started. Wait for the administrator to start it.\n⚠️ Раунд не начался. Ожидайте запуска от администратора.")
+        threading.Timer(30, lambda: safe_delete_message(message.chat.id, msg.message_id)).start()
         return
 
     # Игрок уже бросал
     if str(user_id) in roll_results:
-        bot.reply_to(message, f"⛔ You have already rolled a number this round.\n⛔ Вы уже бросили число в этом раунде.")
+        msg = bot.reply_to(message, f"⛔ You have already rolled a number this round.\n⛔ Вы уже бросили число в этом раунде.")
+        threading.Timer(30, lambda: safe_delete_message(message.chat.id, msg.message_id)).start()
         return
 
     # Генерация числа
     score = random.randint(0, 100)
     roll_results[str(user_id)] = (score, display_name, username)
-    bot.reply_to(message, f"🎲 {score}")
+    msg = bot.reply_to(message, f"{display_name} 🎲 {score}")
     logging.info(f"{username} использовал /roll: {score}")
+
+    # Удаляем сообщение через 2.5 минуты
+    threading.Timer(150, lambda: safe_delete_message(message.chat.id, msg.message_id)).start()
 
 # ==== Завершение раунда Roll ====
 def finish_roll_round():
@@ -367,22 +556,74 @@ def finish_roll_round():
         winner_id, winner_name, winner_username = winners[0]
         scores[str(winner_id)] = scores.get(str(winner_id), 0) + 1
         save_scores(scores)
-        bot.send_message(CHAT_ID, f"🏆 Round winner: {winner_name} with {max_score}!\n🏆 Победитель раунда: {winner_name} с результатом {max_score}!")
+        mention = f"@{winner_username}" if winner_username else winner_name
+        msg = bot.send_message(CHAT_ID, f"🏆 Round winner: {mention} with {max_score}!\n🏆 Победитель раунда: {mention} с результатом {max_score}!")
         logging.info(f"Победитель /roll: {winner_username} ({winner_id}) ({max_score})")
+        
     else:
-        winner_names = [name for _, name, _ in winners]
-        winner_usernames = [username for _, _, username in winners]
+        mentions = []
+        for _, name, username in winners:
+            mentions.append(f"@{username}" if username else name)
 
         # Ничья
-        bot.send_message(
+        msg = bot.send_message(
             CHAT_ID,
-            f"🤝 Tie between: {', '.join(winner_names)} with score {max_score}!\n\nUse /reroll to determine the winner.\n🤝 Ничья между: {', '.join(winner_names)} с результатом {max_score}!\n\nИспользуйте /reroll, чтобы определить победителя."
+            f"🤝 Tie between: {', '.join(mentions)} with score {max_score}!\n\n/reroll enabled for tie-breaker.\n🤝 Ничья между: {', '.join(mentions)} с результатом {max_score}!\n\n/reroll включён для определения победителя."
         )
+        reroll_enabled = True
+        reroll_temp_players = set(int(uid) for uid, _, _ in winners)
         logging.info(f"Ничья в /roll между: {', '.join(winner_usernames)} ({max_score})")
+
+        # Автоматическое удаление сообщения через 1 минуту
+        threading.Timer(60, lambda: safe_delete_message(CHAT_ID, msg.message_id)).start()
 
     # Сброс раунда
     roll_results.clear()
     roll_round_active = False
+
+# === ДОБАВЛЕНИЕ ПЕРЕМЕННОЙ ДЛЯ КОНТРОЛЯ ДОСТУПНОСТИ /reroll ===
+reroll_enabled = False
+reroll_temp_players = set()
+
+# ==== ОБРАБОТЧИК КОМАНДЫ /reroll_on ====
+@bot.message_handler(commands=['reroll_on'])
+@delete_command_after
+def handle_reroll_on(message):
+    global reroll_enabled
+    if str(message.chat.id) != CHAT_ID:
+        return
+
+    try:
+        member = bot.get_chat_member(message.chat.id, message.from_user.id)
+        if member.status not in ['administrator', 'creator']:
+            return
+    except:
+        return
+
+    reroll_enabled = True
+    reroll_temp_players.clear()
+    bot.reply_to(message, f"✅ The /reroll command is now enabled.\n✅ Команда /reroll теперь включена.")
+    logging.info(f"{message.from_user.username or message.from_user.id} включил использование команды /reroll")
+    
+# ==== ОБРАБОТЧИК КОМАНДЫ /reroll_off ====
+@bot.message_handler(commands=['reroll_off'])
+@delete_command_after
+def handle_reroll_off(message):
+    global reroll_enabled
+    if str(message.chat.id) != CHAT_ID:
+        return
+
+    try:
+        member = bot.get_chat_member(message.chat.id, message.from_user.id)
+        if member.status not in ['administrator', 'creator']:
+            return
+    except:
+        return
+
+    reroll_enabled = False
+    reroll_temp_players.clear()
+    bot.reply_to(message, f"⛔ The /reroll command is now disabled.\n⛔ Команда /reroll теперь отключена.")
+    logging.info(f"{message.from_user.username or message.from_user.id} отключил использование команды /reroll")
 
 # === ПАМЯТЬ ДЛЯ ИГРЫ ===
 game_state = {}                                             # Храним одного игрока
@@ -399,66 +640,88 @@ BEATS = {
 
 # ==== ОБРАБОТЧИК КОМАНДЫ /reroll ====
 @bot.message_handler(commands=['reroll'])
+@delete_command_after
 def handle_reroll_command(message):
+    global reroll_enabled, reroll_temp_players
     try:
         if str(message.chat.id) != CHAT_ID:
             return
 
         user_id = message.from_user.id
+        username = message.from_user.username
         display_name = message.from_user.first_name or "Игрок"
+        mention = f"@{username}" if username else display_name
+
+        if not reroll_enabled and user_id not in reroll_temp_players:
+            msg = bot.reply_to(message, f"⛔ The /reroll command is temporarily disabled.\n⛔ Команда /reroll временно отключена.")
+            threading.Timer(30, lambda: safe_delete_message(message.chat.id, msg.message_id)).start()
+            return
 
         emoji = random.choice(list(CHOICES.keys()))
-        name = CHOICES[emoji]                               # Название выбора
-        
+        name = CHOICES[emoji]                                 # Название выбора
+
         # [лог] Первый игрок бросил
-        logging.info(f"{message.from_user.username or message.from_user.id} бросил: {name}")
+        logging.info(f"{username or user_id} бросил: {name}")
 
         # Первый игрок
         if not game_state:
-            game_state[user_id] = (name, emoji, display_name)
-            bot.reply_to(message, f"{emoji}\n\nWaiting for the second player...\nЖдём второго игрока...")
+            game_state[user_id] = (name, emoji, display_name, username)
+            msg = bot.reply_to(message, f"{emoji}\n\nWaiting for the second player...\nЖдём второго игрока...")
+            threading.Timer(60, lambda: safe_delete_message(message.chat.id, msg.message_id)).start()
             return
 
         # Если второй игрок — сравнение
-        for opponent_id, (opp_name, opp_emoji, opp_display) in game_state.items():
+        for opponent_id, (opp_name, opp_emoji, opp_display, opp_username) in game_state.items():
             if opponent_id == user_id:
-                bot.reply_to(message, "⛔ You have already played. We are waiting for another player.\n⛔ Вы уже сыграли. Ждём другого игрока.")
+                bot.reply_to(message, f"⛔ You have already played. We are waiting for another player.\n⛔ Вы уже сыграли. Ждём другого игрока.")
                 return
 
             # [лог] Второй игрок бросил
-            logging.info(f"{message.from_user.username or message.from_user.id} бросил: {name}")
-            logging.info(f"{message.from_user.username or message.from_user.id} бросил: {opp_name}")
-            
+            logging.info(f"{username or user_id} бросил: {name}")
+            logging.info(f"{opp_username or opponent_id} бросил: {opp_name}")
+
             # Второй игрок сыграл
             game_state.clear()
 
-            result = f"{opp_display} {opp_emoji}\n\n{emoji} {display_name}\n\n"
+            opp_mention = f"@{opp_username}" if opp_username else opp_display
+
+            result = f"{opp_mention} {opp_emoji}\n\n{emoji} {mention}\n\n"
 
             if emoji == opp_emoji:
                 result += f"🤝 Draw!\n🤝 Ничья!"
                 logging.info("Результат игры: Ничья!")
+                reroll_temp_players = {user_id, opponent_id}       # повторная попытка разрешена
+                msg = bot.send_message(message.chat.id, result + "\n\n⚔️ Use /reroll again to resolve tie.\n⚔️ Используйте /reroll снова для определения победителя.")
+                threading.Timer(60, lambda: safe_delete_message(message.chat.id, msg.message_id)).start()
+                return
             elif BEATS[emoji] == opp_emoji:
-                result += f"🎉 {display_name} wins!\n🎉 Победил {display_name}!"
+                result += f"🎉 {mention} wins!\n🎉 Победил {mention}!"
                 scores[str(user_id)] = scores.get(str(user_id), 0) + 1
                 save_scores(scores)
-                logging.info(f"Победитель: {message.from_user.username or message.from_user.id}")
+                logging.info(f"Победитель: {username or user_id} {name}")
             else:
-                result += f"🎉 {opp_display} wins!\n🎉 Победил {opp_display}!"
+                result += f"🎉 {opp_mention} wins!\n🎉 Победил {opp_mention}!"
                 scores[str(opponent_id)] = scores.get(str(opponent_id), 0) + 1
                 save_scores(scores)
-                logging.info(f"Победитель: {message.from_user.username or message.from_user.id}")
+                logging.info(f"Победитель: {opp_username or opponent_id} {opp_name}")
+
+            reroll_temp_players.clear()
+            reroll_enabled = False                                 # отключаем после разрешения
 
             bot.send_message(message.chat.id, result)
             return
+
     except Exception as e:
         logging.error(f"Ошибка в /reroll: {e}")
 
 # ==== ОБРАБОТЧИК КОМАНДЫ /score ====
 @bot.message_handler(commands=['score'])
+@delete_command_after
 def handle_score_command(message):
     try:
         if not scores:
-            bot.reply_to(message, f"🏆 There are no winners yet.\n🏆 Ещё нет победителей.")
+            msg = bot.reply_to(message, f"🏆 There are no winners yet.\n🏆 Ещё нет победителей.")
+            threading.Timer(180, lambda: safe_delete_message(message.chat.id, msg.message_id)).start()
             return
 
         # Сортировка по убыванию очков
@@ -497,6 +760,7 @@ GOOD_NIGHT_PHRASES = [
 
 # ==== ОБРАБОТЧИК КОМАНДЫ /gm ====
 @bot.message_handler(commands=['gm'])
+@delete_command_after
 def handle_gm_command(message):
     try:
         if str(message.chat.id) == CHAT_ID:
@@ -510,6 +774,7 @@ def handle_gm_command(message):
 
 # ==== ОБРАБОТЧИК КОМАНДЫ /gn ====        
 @bot.message_handler(commands=['gn'])
+@delete_command_after
 def handle_gn_command(message):
     try:
         if str(message.chat.id) == CHAT_ID:
@@ -522,23 +787,20 @@ def handle_gn_command(message):
         logging.error(f"Ошибка в /gn: {e}")
 
 # === ПЕРЕСЫЛКА СООБЩЕНИЙ В DISCORD ===
-@bot.message_handler(func=lambda message: True, content_types=['text', 'photo'])
-def handle_all_messages(message):
+# Обработка фото
+@bot.message_handler(content_types=['photo'])
+def handle_photo_message(message):
+    logging.info(f"[ALL_MSG] Фото от {message.from_user.username or message.from_user.id}")
+
     if str(message.chat.id) != CHAT_ID:
         return
 
     # Получаем имя пользователя для отображения
-    if message.from_user.full_name:
-        user_display = message.from_user.full_name
-    elif message.from_user.username:
-        user_display = f"@{message.from_user.username}"
-    else:
-        user_display = "Unknown"
-
-    # Аватарка (одна общая кастомная)
+    user_display = message.from_user.full_name or f"@{message.from_user.username}" if message.from_user.username else "Unknown"
+    
+	# Аватарка (одна общая кастомная)
     avatar_url = DISCORD_AVATAR_URL
 
-    # Проверка, является ли сообщение ответом
     if message.reply_to_message:
         reply_author = message.reply_to_message.from_user.full_name or "Unknown"
         reply_text = message.reply_to_message.text or message.reply_to_message.caption or "<медиа>"
@@ -546,35 +808,29 @@ def handle_all_messages(message):
     else:
         quoted = ""
 
-    # Обработка текстового сообщения
-    if message.content_type == 'text':
-        full_text = f"{quoted} {message.text}"
-        send_to_discord(full_text, username=user_display, avatar_url=avatar_url)
+    try:
+        file_info = bot.get_file(message.photo[-1].file_id)
+        downloaded_file = bot.download_file(file_info.file_path)
 
-    # Обработка фото
-    elif message.content_type == 'photo':
+        # Создаём временный файл и сохраняем туда фото
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp_file:
+            temp_path = tmp_file.name
+            logging.info(f"[TEMP FILE] Сохраняем фото во временный файл: {temp_path}")
+            tmp_file.write(downloaded_file)
+
+        caption = message.caption or ""
+        full_caption = f"{quoted}{caption}"
+        send_photo_to_discord(full_caption, temp_path, username=user_display, avatar_url=avatar_url)
+
+    except Exception as e:
+        logging.error(f"Ошибка при обработке фото: {e}")
+
+    finally:
         try:
-            file_info = bot.get_file(message.photo[-1].file_id)
-            downloaded_file = bot.download_file(file_info.file_path)
-
-            # Создаём временный файл и сохраняем туда фото
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp_file:
-                tmp_file.write(downloaded_file)
-                temp_path = tmp_file.name
-
-            caption = message.caption or ""
-            full_caption = f"{quoted} {caption}"
-            send_photo_to_discord(full_caption, temp_path, username=user_display, avatar_url=avatar_url)
-
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
         except Exception as e:
-            logging.error(f"Ошибка при обработке фото: {e}")
-
-        finally:
-            try:
-                if os.path.exists(temp_path):
-                    os.remove(temp_path)
-            except Exception as e:
-                logging.warning(f"❗ Не удалось удалить временный файл: {e}")
+            logging.warning(f"❗ Не удалось удалить временный файл: {e}")
 
 # ==== НАСТРОЙКА РАСПИСАНИЯ (1 раз в 4 часа) ====
 schedule.every(4).hours.do(send_price_image)
