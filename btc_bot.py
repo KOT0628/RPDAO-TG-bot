@@ -292,7 +292,7 @@ def start_roll_round(chat_id):
     roll_timer = Timer(120, finish_roll_round)              # 2 минуты
     roll_timer.start()
 
-    bot.send_message(chat_id, "🎲 Раунд начался! Используйте /roll, чтобы бросить число от 0 до 100. У вас 2 минуты!")
+    bot.send_message(chat_id, f"🎲 The round has begun! Use /roll to roll a number from 0 to 100. You have 2 minutes!\n🎲 Раунд начался! Используйте /roll, чтобы бросить число от 0 до 100. У вас 2 минуты!")
     return True
 
 # ==== ОБРАБОТЧИК КОМАНДЫ /start_roll ====
@@ -308,18 +308,18 @@ def handle_start_roll(message):
     try:
         member = bot.get_chat_member(message.chat.id, user_id)
         if not (member.status in ['administrator', 'creator']):
-            bot.reply_to(message, "⛔ Только администратор может запустить раунд.")
+            bot.reply_to(message, f"⛔ Only the administrator can start a round.\n⛔ Только администратор может запустить раунд.")
             return
     except Exception as e:
         logging.error(f"Ошибка при проверке прав администратора: {e}")
-        bot.reply_to(message, "❌ Не удалось проверить права.")
+        bot.reply_to(message, f"❌ Unable to verify rights.\n❌ Не удалось проверить права.")
         return
 
     # Запускаем раунд
     if start_roll_round(message.chat.id):
         logging.info(f"{username} запустил раунд через /start_roll")
     else:
-        bot.reply_to(message, "⚠️ Раунд уже запущен.")
+        bot.reply_to(message, f"⚠️ The round has already been launched.\n⚠️ Раунд уже запущен.")
 
 # ==== ОБРАБОТЧИК КОМАНДЫ /roll ====
 @bot.message_handler(commands=['roll'])
@@ -335,12 +335,12 @@ def handle_roll_command(message):
 
     # Старт раунда, если он не начат
     if not roll_round_active:
-        bot.reply_to(message, "⚠️ Раунд не начался. Ожидайте запуска от администратора.")
+        bot.reply_to(message, f"⚠️ Round has not started. Wait for the administrator to start it.\n⚠️ Раунд не начался. Ожидайте запуска от администратора.")
         return
 
     # Игрок уже бросал
     if str(user_id) in roll_results:
-        bot.reply_to(message, "⛔ Вы уже бросили число в этом раунде.")
+        bot.reply_to(message, f"⛔ You have already rolled a number this round.\n⛔ Вы уже бросили число в этом раунде.")
         return
 
     # Генерация числа
@@ -354,7 +354,7 @@ def finish_roll_round():
     global roll_round_active, roll_results
 
     if not roll_results:
-        bot.send_message(CHAT_ID, "⏱ В раунде /roll не было участников.")
+        bot.send_message(CHAT_ID, f"⏱ There were no participants in the /roll round.\n⏱ В раунде /roll не было участников.")
         roll_round_active = False
         return
 
@@ -367,7 +367,7 @@ def finish_roll_round():
         winner_id, winner_name, winner_username = winners[0]
         scores[str(winner_id)] = scores.get(str(winner_id), 0) + 1
         save_scores(scores)
-        bot.send_message(CHAT_ID, f"🏆 Победитель раунда: {winner_name} с результатом {max_score}!")
+        bot.send_message(CHAT_ID, f"🏆 Round winner: {winner_name} with {max_score}!\n🏆 Победитель раунда: {winner_name} с результатом {max_score}!")
         logging.info(f"Победитель /roll: {winner_username} ({winner_id}) ({max_score})")
     else:
         winner_names = [name for _, name, _ in winners]
@@ -376,7 +376,7 @@ def finish_roll_round():
         # Ничья
         bot.send_message(
             CHAT_ID,
-            f"🤝 Ничья между: {', '.join(winner_names)} с результатом {max_score}!\n\nИспользуйте /reroll, чтобы определить победителя."
+            f"🤝 Tie between: {', '.join(winner_names)} with score {max_score}!\n\nUse /reroll to determine the winner.\n🤝 Ничья между: {', '.join(winner_names)} с результатом {max_score}!\n\nИспользуйте /reroll, чтобы определить победителя."
         )
         logging.info(f"Ничья в /roll между: {', '.join(winner_usernames)} ({max_score})")
 
@@ -416,13 +416,13 @@ def handle_reroll_command(message):
         # Первый игрок
         if not game_state:
             game_state[user_id] = (name, emoji, display_name)
-            bot.reply_to(message, f"{emoji}\n\nЖдём второго игрока...")
+            bot.reply_to(message, f"{emoji}\n\nWaiting for the second player...\nЖдём второго игрока...")
             return
 
         # Если второй игрок — сравнение
         for opponent_id, (opp_name, opp_emoji, opp_display) in game_state.items():
             if opponent_id == user_id:
-                bot.reply_to(message, "⛔ Вы уже сыграли. Ждём другого игрока.")
+                bot.reply_to(message, "⛔ You have already played. We are waiting for another player.\n⛔ Вы уже сыграли. Ждём другого игрока.")
                 return
 
             # [лог] Второй игрок бросил
@@ -435,15 +435,15 @@ def handle_reroll_command(message):
             result = f"{opp_display} {opp_emoji}\n\n{emoji} {display_name}\n\n"
 
             if emoji == opp_emoji:
-                result += "🤝 Ничья!"
+                result += f"🤝 Draw!\n🤝 Ничья!"
                 logging.info("Результат игры: Ничья!")
             elif BEATS[emoji] == opp_emoji:
-                result += f"🎉 Победил {display_name}!"
+                result += f"🎉 {display_name} wins!\n🎉 Победил {display_name}!"
                 scores[str(user_id)] = scores.get(str(user_id), 0) + 1
                 save_scores(scores)
                 logging.info(f"Победитель: {message.from_user.username or message.from_user.id}")
             else:
-                result += f"🎉 Победил {opp_display}!"
+                result += f"🎉 {opp_display} wins!\n🎉 Победил {opp_display}!"
                 scores[str(opponent_id)] = scores.get(str(opponent_id), 0) + 1
                 save_scores(scores)
                 logging.info(f"Победитель: {message.from_user.username or message.from_user.id}")
@@ -458,21 +458,21 @@ def handle_reroll_command(message):
 def handle_score_command(message):
     try:
         if not scores:
-            bot.reply_to(message, "🏆 Ещё нет победителей.")
+            bot.reply_to(message, f"🏆 There are no winners yet.\n🏆 Ещё нет победителей.")
             return
 
         # Сортировка по убыванию очков
         sorted_scores = sorted(scores.items(), key=lambda x: x[1], reverse=True)
         top = sorted_scores[:5]
 
-        text = "🏆 Топ игроков:\n"
+        text = "🏆 Top players:\n🏆 Топ игроков:\n"
         for i, (user_id, points) in enumerate(top, 1):
             try:
                 user = bot.get_chat_member(message.chat.id, int(user_id)).user
                 name = user.first_name or f"ID:{user_id}"
             except:
                 name = f"ID:{user_id}"
-            text += f"{i}. {name} - {points} очк.\n"
+            text += f"{i}. {name} - {points} $LEG\n"
 
         bot.reply_to(message, text)
     except Exception as e:
