@@ -320,8 +320,8 @@ def start_next_trivia():
     global current_trivia, current_mask, hint_index
 
     if not trivia_questions:
-        msg = bot.send_message(CHAT_ID, f"❌ The list of questions is empty.\n❌ Список вопросов пуст.")
-        threading.Timer(30, lambda: safe_delete_message(message.chat.id, msg.message_id)).start()
+        msg = bot.send_message(CHAT_ID, f"❌ The list of questions is empty.\n\n❌ Список вопросов пуст.")
+        threading.Timer(30, lambda: safe_delete_message(CHAT_ID, msg.message_id)).start()
         return
 
     current_trivia = random.choice(trivia_questions)
@@ -329,7 +329,7 @@ def start_next_trivia():
     current_mask = ['-' for _ in answer]
     hint_index = 0
 
-    bot.send_message(CHAT_ID, f"🧠 Trivia started! {question}\n🧠 Викторина началась! {question}")
+    bot.send_message(CHAT_ID, f"🧠 Trivia started! {question}\n\n🧠 Викторина началась! {question}")
     schedule_hint()
 
 # Подсказки
@@ -348,12 +348,12 @@ def send_hint():
             break
         hint_index += 1
 
-    bot.send_message(CHAT_ID, f"🕵️‍♂️ Hint: {''.join(current_mask)}\n🕵️‍♂️ Подсказка: {''.join(current_mask)}")
+    bot.send_message(CHAT_ID, f"🕵️‍♂️ Hint: {''.join(current_mask)}\n\n🕵️‍♂️ Подсказка: {''.join(current_mask)}")
 
     if '-' in current_mask:
         schedule_hint()
     else:
-        bot.send_message(CHAT_ID, f"❌ No one guessed it! The answer was: {answer}\n❌ Никто не угадал! Ответ был: {answer}")
+        bot.send_message(CHAT_ID, f"❌ No one guessed it! The answer was: {answer}\n\n❌ Никто не угадал! Ответ был: {answer}")
         start_next_trivia()
 
 # === ЗАПУСК ВИКТОРИНЫ (только админ) ===
@@ -367,19 +367,19 @@ def handle_trivia_start(message):
     try:
         member = bot.get_chat_member(message.chat.id, user_id)
         if not (member.status in ['administrator', 'creator']):
-            msg = bot.reply_to(message, f"⛔ Only an administrator can start a Trivia.\n⛔ Только администратор может запустить викторину.")
-            threading.Timer(30, lambda: safe_delete_message(message.chat.id, msg.message_id)).start()
+            msg = bot.reply_to(message, f"⛔ Only an administrator can start a Trivia.\n\n⛔ Только администратор может запустить викторину.")
+            threading.Timer(30, lambda: safe_delete_message(CHAT_ID, msg.message_id)).start()
             return
     except:
         return
 
     if trivia_active:
-        msg = bot.send_message(CHAT_ID, f"⚠️ The Trivia has already been launched.\n⚠️ Викторина уже запущена.")
-        threading.Timer(30, lambda: safe_delete_message(message.chat.id, msg.message_id)).start()
+        msg = bot.send_message(CHAT_ID, f"⚠️ The Trivia has already been launched.\n\n⚠️ Викторина уже запущена.")
+        threading.Timer(30, lambda: safe_delete_message(CHAT_ID, msg.message_id)).start()
         return
 
     trivia_active = True
-    bot.send_message(CHAT_ID, f"🔎 The Trivia has started! Get ready to answer!\n🔎 Викторина запущена! Готовьтесь отвечать!")
+    bot.send_message(CHAT_ID, f"🔎 The Trivia has started! Get ready to answer!\n\n🔎 Викторина запущена! Готовьтесь отвечать!")
     start_next_trivia()
 
 # === ОСТАНОВКА ВИКТОРИНЫ (только админ) ===
@@ -393,8 +393,8 @@ def handle_trivia_stop(message):
     try:
         member = bot.get_chat_member(message.chat.id, user_id)
         if not (member.status in ['administrator', 'creator']):
-            msg = bot.reply_to(message, f"⛔ Only an administrator can start a Trivia.\n⛔ Только администратор может остановить викторину.")
-            threading.Timer(30, lambda: safe_delete_message(message.chat.id, msg.message_id)).start()
+            msg = bot.reply_to(message, f"⛔ Only an administrator can start a Trivia.\n\n⛔ Только администратор может остановить викторину.")
+            threading.Timer(30, lambda: safe_delete_message(CHAT_ID, msg.message_id)).start()
             return
     except:
         return
@@ -406,13 +406,15 @@ def handle_trivia_stop(message):
     if hint_timer:
         hint_timer.cancel()
 
-    bot.send_message(CHAT_ID, f"🛑 The Trivia has been stopped.\n🛑 Викторина остановлена.")
+    bot.send_message(CHAT_ID, f"🛑 The Trivia has been stopped.\n\n🛑 Викторина остановлена.")
 
 # === ОБРАБОТКА ОТВЕТОВ TRIVIA ===
 @bot.message_handler(func=lambda m: m.text and not m.text.startswith('/'), content_types=['text'])
 def handle_text_messages(message):
     global trivia_active, current_trivia, hint_timer
 
+    logging.info(f"[ALL_MSG] Текст от {message.from_user.username or message.from_user.id}")
+    
     if str(message.chat.id) != CHAT_ID:
         return
 
@@ -428,7 +430,7 @@ def handle_text_messages(message):
             scores[str(user_id)] = scores.get(str(user_id), 0) + 5
             save_scores(scores)
 
-            bot.send_message(CHAT_ID, f"🎉 {display_name} guessed the word '{answer}' and gets 5 $LEG!\n🎉 {display_name} угадал слово '{answer}' и получает 5 $LEG!")
+            bot.send_message(CHAT_ID, f"🎉 {display_name} guessed the word '{answer}' and gets 5 $LEG!\n\n🎉 {display_name} угадал слово '{answer}' и получает 5 $LEG!")
             logging.info(f"Победитель викторины: {message.from_user.username or message.from_user.id}, +5 очков")
 
             start_next_trivia()
@@ -453,10 +455,21 @@ def handle_text_messages(message):
     full_text = f"{quoted}{message.text}"
     send_to_discord(full_text, username=user_display, avatar_url=avatar_url)
 
-# ==== ЗАПУСК РАУНДА ROLL ====
+# ==== ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ДЛЯ РЕЖИМА /roll ====
 roll_round_active = False
-roll_results = {}  # user_id: (score, display_name, username)
+roll_results = {}                                          # user_id: (score, display_name, username)
 roll_timer = None
+
+# === ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ДЛЯ РЕЖИМА /reroll ===
+reroll_enabled = False
+reroll_temp_players = set()
+
+# Новый режим: 'tournament' или 'free'
+reroll_mode = 'free'                                       # по умолчанию свободный
+
+# Очередь для дуэлей в режиме 'tournament'
+reroll_duel_queue = []                                     # Очередь игроков
+current_duel_players = set()                               # Пара для текущей дуэли
 
 def start_roll_round(chat_id):
     global roll_round_active, roll_results, roll_timer
@@ -466,10 +479,10 @@ def start_roll_round(chat_id):
 
     roll_round_active = True
     roll_results = {}
-    roll_timer = Timer(120, finish_roll_round)              # 2 минуты
+    roll_timer = Timer(30, finish_roll_round)               # 2 минуты
     roll_timer.start()
 
-    bot.send_message(chat_id, f"🎲 The round has begun! Use /roll to roll a number from 0 to 100. You have 2 minutes!\n🎲 Раунд начался! Используйте /roll, чтобы бросить число от 0 до 100. У вас 2 минуты!")
+    bot.send_message(chat_id, f"🎲 The round has begun! Use /roll to roll a number from 0 to 100. You have 2 minutes!\n\n🎲 Раунд начался! Используйте /roll, чтобы бросить число от 0 до 100. У вас 2 минуты!")
     return True
 
 # ==== ОБРАБОТЧИК КОМАНДЫ /start_roll ====
@@ -486,12 +499,12 @@ def handle_start_roll(message):
     try:
         member = bot.get_chat_member(message.chat.id, user_id)
         if not (member.status in ['administrator', 'creator']):
-            msg = bot.reply_to(message, f"⛔ Only the administrator can start a round.\n⛔ Только администратор может запустить раунд.")
+            msg = bot.reply_to(message, f"⛔ Only the administrator can start a round.\n\n⛔ Только администратор может запустить раунд.")
             threading.Timer(30, lambda: safe_delete_message(message.chat.id, msg.message_id)).start()
             return
     except Exception as e:
         logging.error(f"Ошибка при проверке прав администратора: {e}")
-        msg = bot.reply_to(message, f"❌ Unable to verify rights.\n❌ Не удалось проверить права.")
+        msg = bot.reply_to(message, f"❌ Unable to verify rights.\n\n❌ Не удалось проверить права.")
         threading.Timer(30, lambda: safe_delete_message(message.chat.id, msg.message_id)).start()
         return
 
@@ -499,7 +512,7 @@ def handle_start_roll(message):
     if start_roll_round(message.chat.id):
         logging.info(f"{username} запустил раунд через /start_roll")
     else:
-        msg = bot.reply_to(message, f"⚠️ The round has already been launched.\n⚠️ Раунд уже запущен.")
+        msg = bot.reply_to(message, f"⚠️ The round has already been launched.\n\n⚠️ Раунд уже запущен.")
         threading.Timer(30, lambda: safe_delete_message(message.chat.id, msg.message_id)).start()
 
 # ==== ОБРАБОТЧИК КОМАНДЫ /roll ====
@@ -517,18 +530,18 @@ def handle_roll_command(message):
 
     # Старт раунда, если он не начат
     if not roll_round_active:
-        msg = bot.reply_to(message, f"⚠️ Round has not started. Wait for the administrator to start it.\n⚠️ Раунд не начался. Ожидайте запуска от администратора.")
+        msg = bot.reply_to(message, f"⚠️ Round has not started. Wait for the administrator to start it.\n\n⚠️ Раунд не начался. Ожидайте запуска от администратора.")
         threading.Timer(30, lambda: safe_delete_message(message.chat.id, msg.message_id)).start()
         return
 
     # Игрок уже бросал
     if str(user_id) in roll_results:
-        msg = bot.reply_to(message, f"⛔ You have already rolled a number this round.\n⛔ Вы уже бросили число в этом раунде.")
+        msg = bot.reply_to(message, f"⛔ You have already rolled a number this round.\n\n⛔ Вы уже бросили число в этом раунде.")
         threading.Timer(30, lambda: safe_delete_message(message.chat.id, msg.message_id)).start()
         return
 
     # Генерация числа
-    score = random.randint(0, 100)
+    score = random.randint(1, 1)
     roll_results[str(user_id)] = (score, display_name, username)
     msg = bot.reply_to(message, f"{display_name} 🎲 {score}")
     logging.info(f"{username} использовал /roll: {score}")
@@ -541,7 +554,7 @@ def finish_roll_round():
     global roll_round_active, roll_results
 
     if not roll_results:
-        bot.send_message(CHAT_ID, f"⏱ There were no participants in the /roll round.\n⏱ В раунде /roll не было участников.")
+        bot.send_message(CHAT_ID, f"⏱ There were no participants in the /roll round.\n\n⏱ В раунде /roll не было участников.")
         roll_round_active = False
         return
 
@@ -549,61 +562,83 @@ def finish_roll_round():
     max_score = max(score for score, _, _ in roll_results.values())
     winners = [(uid, name, username) for uid, (score, name, username) in roll_results.items() if score == max_score]
 
+    mentions_for_msg = []
+    mentions_for_log = []
+    mentions_name = []
+    name_by_uid = {}
+    username_by_uid = {}
+
+    for uid, name, username in winners:
+        # Для сообщений — с @username, если есть
+        mentions_for_msg.append(f"@{username}" if username else name)
+
+        # Для логов — просто username, если есть, иначе name
+        display_log = f"{username} ({uid})" if username else f"{name} ({uid})"
+        mentions_for_log.append(display_log)
+
+        mentions_name.append(name)
+        name_by_uid[int(uid)] = name
+        username_by_uid[int(uid)] = username if username else name
+
     if len(winners) == 1:
         # Победитель один
         winner_id, winner_name, winner_username = winners[0]
         scores[str(winner_id)] = scores.get(str(winner_id), 0) + 1
         save_scores(scores)
         mention = f"@{winner_username}" if winner_username else winner_name
-        msg = bot.send_message(CHAT_ID, f"🏆 Round winner: {mention} with {max_score}!\n🏆 Победитель раунда: {mention} с результатом {max_score}!")
+        msg = bot.send_message(CHAT_ID, f"🏆 Round winner: {mention} with {max_score}!\n\n🏆 Победитель раунда: {mention} с результатом {max_score}!")
         logging.info(f"Победитель /roll: {winner_username} ({winner_id}) ({max_score})")
         
     else:
-        mentions = []
-        for _, name, username in winners:
-            mentions.append(f"@{username}" if username else name)
-
         # Ничья
-        msg = bot.send_message(
-            CHAT_ID,
-            f"🤝 Tie between: {', '.join(mentions)} with score {max_score}!\n\n/reroll enabled for tie-breaker.\n🤝 Ничья между: {', '.join(mentions)} с результатом {max_score}!\n\n/reroll включён для определения победителя."
-        )
-        global reroll_enabled, reroll_temp_players
+        global reroll_enabled, reroll_mode, reroll_duel_queue, current_duel_players
+        
+        # В случае ничьей:
         reroll_enabled = True
-        reroll_temp_players = set(int(uid) for uid, _, _ in winners)
-        logging.info(f"Ничья в /roll между: {', '.join(mentions)} ({max_score})")
-
-        # Автоматическое удаление сообщения через 1 минуту
-        threading.Timer(60, lambda: safe_delete_message(CHAT_ID, msg.message_id)).start()
+        reroll_mode = 'tournament'
+        reroll_duel_queue = [int(uid) for uid, _, _ in winners]
+        first_id = reroll_duel_queue.pop(0)
+        second_id = reroll_duel_queue.pop(0)
+        current_duel_players = {first_id, second_id}
+        bot.send_message(
+            CHAT_ID,
+            f"🤝 Tie between: {', '.join(mentions_for_msg)} with score {max_score}!\n\n/reroll enabled for tie-breaker.\n\n🤝 Ничья между: {', '.join(mentions_for_msg)} с результатом {max_score}!\n\n/reroll включён для определения победителя.\n\n"
+            f"⚔️ First duel: {name_by_uid[first_id]} vs {name_by_uid[second_id]}\n⚔️ Первая дуель: {name_by_uid[first_id]} против {name_by_uid[second_id]}"
+        )    
+        logging.info(f"Ничья в /roll между: {', '.join(mentions_for_log)} ({max_score})")
 
     # Сброс раунда
     roll_results.clear()
     roll_round_active = False
 
-# === ДОБАВЛЕНИЕ ПЕРЕМЕННОЙ ДЛЯ КОНТРОЛЯ ДОСТУПНОСТИ /reroll ===
-reroll_enabled = False
-reroll_temp_players = set()
-
 # ==== ОБРАБОТЧИК КОМАНДЫ /reroll_on ====
 @bot.message_handler(commands=['reroll_on'])
 @delete_command_after
 def handle_reroll_on(message):
-    global reroll_enabled
+    global reroll_enabled, reroll_mode, reroll_temp_players, current_duel_players, reroll_duel_queue
     if str(message.chat.id) != CHAT_ID:
         return
 
     try:
         member = bot.get_chat_member(message.chat.id, message.from_user.id)
         if member.status not in ['administrator', 'creator']:
+            msg = bot.reply_to(message, f"⛔ Available to administrators only.\n\n⛔ Доступно только администраторам.")
+            threading.Timer(30, lambda: safe_delete_message(message.chat.id, msg.message_id)).start()
             return
-    except:
+    except Exception as e:
+        logging.error(f"Ошибка при проверке прав администратора: {e}")
+        msg = bot.reply_to(message, f"❌ Unable to verify rights.\n\n❌ Не удалось проверить права.")
+        threading.Timer(30, lambda: safe_delete_message(message.chat.id, msg.message_id)).start()
         return
 
     reroll_enabled = True
+    reroll_mode = 'free'
     reroll_temp_players.clear()
-    bot.reply_to(message, f"✅ The /reroll command is now enabled.\n✅ Команда /reroll теперь включена.")
-    logging.info(f"{message.from_user.username or message.from_user.id} включил использование команды /reroll")
-    
+    current_duel_players.clear()
+    reroll_duel_queue.clear()
+    bot.reply_to(message, f"✅ The /reroll command is now enabled.\n\n✅ Команда /reroll теперь включена.")
+    logging.info(f"{message.from_user.username or message.from_user.id} включил использование команды /reroll (режим: free)")
+
 # ==== ОБРАБОТЧИК КОМАНДЫ /reroll_off ====
 @bot.message_handler(commands=['reroll_off'])
 @delete_command_after
@@ -615,13 +650,18 @@ def handle_reroll_off(message):
     try:
         member = bot.get_chat_member(message.chat.id, message.from_user.id)
         if member.status not in ['administrator', 'creator']:
+            msg = bot.reply_to(message, f"⛔ Available to administrators only.\n\n⛔ Доступно только администраторам.")
+            threading.Timer(30, lambda: safe_delete_message(message.chat.id, msg.message_id)).start()
             return
-    except:
+    except Exception as e:
+        logging.error(f"Ошибка при проверке прав администратора: {e}")
+        msg = bot.reply_to(message, f"❌ Unable to verify rights.\n\n❌ Не удалось проверить права.")
+        threading.Timer(30, lambda: safe_delete_message(message.chat.id, msg.message_id)).start()
         return
 
     reroll_enabled = False
     reroll_temp_players.clear()
-    bot.reply_to(message, f"⛔ The /reroll command is now disabled.\n⛔ Команда /reroll теперь отключена.")
+    bot.reply_to(message, f"⛔ The /reroll command is now disabled.\n\n⛔ Команда /reroll теперь отключена.")
     logging.info(f"{message.from_user.username or message.from_user.id} отключил использование команды /reroll")
 
 # === ПАМЯТЬ ДЛЯ ИГРЫ ===
@@ -641,8 +681,10 @@ BEATS = {
 @bot.message_handler(commands=['reroll'])
 @delete_command_after
 def handle_reroll_command(message):
-    global reroll_enabled, reroll_temp_players
     try:
+        global reroll_enabled, reroll_temp_players, reroll_mode
+        global current_duel_players, reroll_duel_queue
+
         if str(message.chat.id) != CHAT_ID:
             return
 
@@ -651,21 +693,21 @@ def handle_reroll_command(message):
         display_name = message.from_user.first_name or "Игрок"
         mention = f"@{username}" if username else display_name
 
+        # === Проверка доступа к команде ===
         if not reroll_enabled:
-            msg = bot.reply_to(message, f"⛔ The /reroll command is disabled.\n⛔ Команда /reroll отключена.")
+            msg = bot.reply_to(message, "⛔ The /reroll command is temporarily disabled.\n\n⛔ Команда /reroll временно отключена.")
             threading.Timer(30, lambda: safe_delete_message(message.chat.id, msg.message_id)).start()
             return
 
-        if user_id not in reroll_temp_players:
-            msg = bot.reply_to(message, f"⛔ Only participants of the tie can use /reroll.\n⛔ Только участники ничьей могут использовать /reroll.")
+        # Если active duel идёт (после /roll), разрешены только игроки из current_duel_players
+        if reroll_mode == 'tournament' and user_id not in current_duel_players:
+            msg = bot.reply_to(message, "⛔ Only current duel participants can use /reroll.\n⛔ Только участники текущей дуэли могут использовать /reroll.")
             threading.Timer(30, lambda: safe_delete_message(message.chat.id, msg.message_id)).start()
             return
 
+        # === Генерация выбора ===
         emoji = random.choice(list(CHOICES.keys()))
         name = CHOICES[emoji]                                 # Название выбора
-
-        # [лог] Первый игрок бросил
-        logging.info(f"{username or user_id} бросил: {name}")
 
         # Первый игрок
         if not game_state:
@@ -674,10 +716,10 @@ def handle_reroll_command(message):
             threading.Timer(60, lambda: safe_delete_message(message.chat.id, msg.message_id)).start()
             return
 
-        # Если второй игрок — сравнение
-        for opponent_id, (opp_name, opp_emoji, opp_display, opp_username) in game_state.items():
+        # Если второй игрок - сравнение
+        for opponent_id, (opp_name, opp_emoji, opp_display, opp_username) in list(game_state.items()):
             if opponent_id == user_id:
-                bot.reply_to(message, f"⛔ You have already played. We are waiting for another player.\n⛔ Вы уже сыграли. Ждём другого игрока.")
+                bot.reply_to(message, f"⛔ You have already played. We are waiting for another player.\n\n⛔ Вы уже сыграли. Ждём другого игрока.")
                 return
 
             # [лог] Второй игрок бросил
@@ -687,33 +729,85 @@ def handle_reroll_command(message):
             # Второй игрок сыграл
             game_state.clear()
 
-            opp_mention = f"@{opp_username}" if opp_username else opp_display
+            player1_line = f"{opp_display} {opp_emoji}"
+            player2_line = f"{emoji} {display_name}"
+            result = f"{player1_line}\n\n{player2_line}\n\n"
 
-            result = f"{opp_mention} {opp_emoji}\n\n{emoji} {mention}\n\n"
-
+            # === Ничья ===
             if emoji == opp_emoji:
-                result += f"🤝 Draw!\n🤝 Ничья!"
+                result += "🤝 It's a draw!\n🤝 Ничья!"
                 logging.info("Результат игры: Ничья!")
-                reroll_temp_players = {user_id, opponent_id}       # повторная попытка разрешена
-                msg = bot.send_message(message.chat.id, result + "\n\n⚔️ Use /reroll again to resolve tie.\n⚔️ Используйте /reroll снова для определения победителя.")
+
+                if reroll_mode == 'tournament':
+                    # Те же игроки снова
+                    current_duel_players = {user_id, opponent_id}
+                    msg = bot.send_message(message.chat.id, result + "\n\n⚔️ Use /reroll again.\n⚔️ Используйте /reroll снова.")
+                else:
+                    reroll_temp_players = {user_id, opponent_id}
+                    msg = bot.send_message(message.chat.id, result + "\n\n⚔️ Use /reroll again to resolve tie.\n⚔️ Используйте /reroll снова для определения победителя.")
                 threading.Timer(60, lambda: safe_delete_message(message.chat.id, msg.message_id)).start()
                 return
-            elif BEATS[emoji] == opp_emoji:
-                result += f"🎉 {mention} wins!\n🎉 Победил {mention}!"
-                scores[str(user_id)] = scores.get(str(user_id), 0) + 1
-                save_scores(scores)
-                logging.info(f"Победитель: {username or user_id} {name}")
+
+            # === Победитель ===
+            if emoji != opp_emoji:
+                if BEATS[emoji] == opp_emoji:
+                    winner_id = user_id
+                    winner_display = display_name
+                    winner_mention = f"@{username}" if username else display_name
+                    winner_log_name = username if username else display_name
+                else:
+                    winner_id = opponent_id
+                    winner_display = opp_display
+                    winner_mention = f"@{opp_username}" if opp_username else opp_display
+                    winner_log_name = opp_username if opp_username else opp_display
+
+            result += f"🎉 Winner: {winner_mention}!\n🎉 Победитель: {winner_mention}!\n"
+
+            scores[str(winner_id)] = scores.get(str(winner_id), 0) + 1
+            save_scores(scores)
+
+            logging.info(f"Победитель: {winner_log_name} ({winner_id})")
+
+            if reroll_mode == 'tournament':
+                if reroll_duel_queue:
+                    next_id = reroll_duel_queue.pop(0)
+                    current_duel_players = {winner_id, next_id}
+
+                    try:
+                        next_user = bot.get_chat_member(message.chat.id, next_id).user
+                        next_name = next_user.first_name or f"ID:{next_id}"
+                    except:
+                        next_name = f"ID:{next_id}"
+
+                    # Используем display_name победителя (winner_mention был first_name ранее)
+                    current_name = winner_display or f"ID:{winner_id}"
+
+                    result += (
+                        f"\n\n⚔️ Next duel: {current_name} vs {next_name}\n"
+                        f"⚔️ Следующая дуэль: {current_name} против {next_name}"
+                    )
+                    bot.send_message(message.chat.id, result)
+                else:
+                    try:
+                        final_user = bot.get_chat_member(message.chat.id, winner_id).user
+                        final_username = f"{final_user.username}" if final_user.username else final_user.first_name or f"ID:{final_user.id}"
+                        final_name = final_user.first_name or f"ID:{winner_id}"
+                    except:
+                        final_name = f"ID:{winner_id}"
+
+                    result += (
+                        f"\n\n🏆 Grand Champion: {final_name}\n"
+                        f"🏆 Финальный победитель турнира: {final_name}"
+                    )
+                    bot.send_message(message.chat.id, result)
+                    logging.info(f"Победитель /roll: {final_username} ({final_user.id})")
+                    reroll_enabled = False
+                    current_duel_players.clear()
+
             else:
-                result += f"🎉 {opp_mention} wins!\n🎉 Победил {opp_mention}!"
-                scores[str(opponent_id)] = scores.get(str(opponent_id), 0) + 1
-                save_scores(scores)
-                logging.info(f"Победитель: {opp_username or opponent_id} {opp_name}")
-
-            reroll_temp_players.clear()
-            reroll_enabled = False                                 # отключаем после разрешения
-
-            bot.send_message(message.chat.id, result)
-            return
+                reroll_temp_players.clear()
+                bot.send_message(message.chat.id, result)
+                return
 
     except Exception as e:
         logging.error(f"Ошибка в /reroll: {e}")
@@ -724,15 +818,15 @@ def handle_reroll_command(message):
 def handle_score_command(message):
     try:
         if not scores:
-            msg = bot.reply_to(message, f"🏆 There are no winners yet.\n🏆 Ещё нет победителей.")
+            msg = bot.reply_to(message, f"🏆 There are no winners yet.")
             threading.Timer(180, lambda: safe_delete_message(message.chat.id, msg.message_id)).start()
             return
 
         # Сортировка по убыванию очков
         sorted_scores = sorted(scores.items(), key=lambda x: x[1], reverse=True)
-        top = sorted_scores[:5]
+        top = sorted_scores[:10]
 
-        text = "🏆 Top players:\n🏆 Топ игроков:\n"
+        text = "🏆 Top players:\n\n"
         for i, (user_id, points) in enumerate(top, 1):
             try:
                 user = bot.get_chat_member(message.chat.id, int(user_id)).user
@@ -794,6 +888,8 @@ def handle_gn_command(message):
 # Обработка фото
 @bot.message_handler(content_types=['photo'])
 def handle_photo_message(message):
+    logging.info(f"[ALL_MSG] Фото от {message.from_user.username or message.from_user.id}")
+
     if str(message.chat.id) != CHAT_ID:
         return
 
