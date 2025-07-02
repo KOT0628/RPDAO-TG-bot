@@ -615,6 +615,42 @@ def finish_roll_round():
     roll_results.clear()
     roll_round_active = False
 
+# ==== ОБРАБОТЧИК КОМАНДЫ /stop_roll ====
+@bot.message_handler(commands=['stop_roll'])
+@delete_command_after
+def handle_stop_roll(message):
+    global roll_round_active, roll_results, reroll_enabled, reroll_temp_players, current_duel_players, reroll_duel_queue, reroll_mode
+
+    if str(message.chat.id) != CHAT_ID:
+        return
+
+    user_id = message.from_user.id
+
+    # Проверка: только админ может остановить
+    try:
+        member = bot.get_chat_member(message.chat.id, user_id)
+        if member.status not in ['administrator', 'creator']:
+            msg = bot.reply_to(message, f"⛔ Only the administrator can stop the tournament.\n\n⛔ Только администратор может остановить турнир.")
+            threading.Timer(30, lambda: safe_delete_message(message.chat.id, msg.message_id)).start()
+            return
+    except Exception as e:
+        logging.error(f"Ошибка при проверке прав администратора: {e}")
+        msg = bot.reply_to(message, f"❌ Unable to verify rights.\n\n❌ Не удалось проверить права.")
+        threading.Timer(30, lambda: safe_delete_message(message.chat.id, msg.message_id)).start()
+        return
+
+    # Сбрасываем все переменные турнира
+    roll_round_active = False
+    roll_results.clear()
+    reroll_enabled = False
+    reroll_temp_players.clear()
+    current_duel_players.clear()
+    reroll_duel_queue.clear()
+    reroll_mode = 'free'
+
+    bot.send_message(message.chat.id, f"🛑 The /roll round and tournament have been forcibly stopped.\n\n🛑 Раунд и турнир /roll были принудительно остановлены.")
+    logging.info(f"{message.from_user.username or message.from_user.id} остановил раунд и турнир /roll через /stop_roll.")
+
 # ==== ОБРАБОТЧИК КОМАНДЫ /reroll_on ====
 @bot.message_handler(commands=['reroll_on'])
 @delete_command_after
