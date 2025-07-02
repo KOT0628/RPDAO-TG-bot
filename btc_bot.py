@@ -413,8 +413,6 @@ def handle_trivia_stop(message):
 def handle_text_messages(message):
     global trivia_active, current_trivia, hint_timer
 
-    logging.info(f"[ALL_MSG] Текст от {message.from_user.username or message.from_user.id}")
-    
     if str(message.chat.id) != CHAT_ID:
         return
 
@@ -479,7 +477,7 @@ def start_roll_round(chat_id):
 
     roll_round_active = True
     roll_results = {}
-    roll_timer = Timer(30, finish_roll_round)               # 2 минуты
+    roll_timer = Timer(120, finish_roll_round)               # 2 минуты
     roll_timer.start()
 
     bot.send_message(chat_id, f"🎲 The round has begun! Use /roll to roll a number from 0 to 100. You have 2 minutes!\n\n🎲 Раунд начался! Используйте /roll, чтобы бросить число от 0 до 100. У вас 2 минуты!")
@@ -524,6 +522,12 @@ def handle_roll_command(message):
     if str(message.chat.id) != CHAT_ID:
         return
 
+    # Блокировка использования от имени ботов и каналов
+    if message.from_user is None or message.from_user.is_bot:
+        msg = bot.reply_to(message, f"⛔ Bots and channels cannot use this command.\n\n⛔ Боты и каналы не могут использовать эту команду.")
+        threading.Timer(30, lambda: safe_delete_message(message.chat.id, msg.message_id)).start()
+        return
+
     user_id = message.from_user.id
     display_name = message.from_user.first_name or "Игрок"
     username = message.from_user.username or str(user_id)
@@ -541,7 +545,7 @@ def handle_roll_command(message):
         return
 
     # Генерация числа
-    score = random.randint(1, 1)
+    score = random.randint(0, 100)
     roll_results[str(user_id)] = (score, display_name, username)
     msg = bot.reply_to(message, f"{display_name} 🎲 {score}")
     logging.info(f"{username} использовал /roll: {score}")
@@ -819,7 +823,7 @@ def handle_score_command(message):
     try:
         if not scores:
             msg = bot.reply_to(message, f"🏆 There are no winners yet.")
-            threading.Timer(180, lambda: safe_delete_message(message.chat.id, msg.message_id)).start()
+            threading.Timer(30, lambda: safe_delete_message(message.chat.id, msg.message_id)).start()
             return
 
         # Сортировка по убыванию очков
@@ -835,7 +839,8 @@ def handle_score_command(message):
                 name = f"ID:{user_id}"
             text += f"{i}. {name} - {points} $LEG\n"
 
-        bot.reply_to(message, text)
+        msg = bot.reply_to(message, text)
+        threading.Timer(180, lambda: safe_delete_message(message.chat.id, msg.message_id)).start()
     except Exception as e:
         logging.error(f"Ошибка в /score: {e}")
 
@@ -888,14 +893,13 @@ def handle_gn_command(message):
 # Обработка фото
 @bot.message_handler(content_types=['photo'])
 def handle_photo_message(message):
-    logging.info(f"[ALL_MSG] Фото от {message.from_user.username or message.from_user.id}")
 
     if str(message.chat.id) != CHAT_ID:
         return
 
     # Получаем имя пользователя для отображения
     user_display = message.from_user.full_name or f"@{message.from_user.username}" if message.from_user.username else "Unknown"
-    
+
 	# Аватарка (одна общая кастомная)
     avatar_url = DISCORD_AVATAR_URL
 
