@@ -276,7 +276,7 @@ def delete_command_after(func):
         try:
             func(message)
         finally:
-            threading.Timer(5, lambda: bot.delete_message(message.chat.id, message.message_id)).start()
+            threading.Timer(5, lambda: safe_delete_message(message.chat.id, message.message_id)).start()
     return wrapper
 
 # ==== ОБРАБОТЧИК КОМАНДЫ /price ====
@@ -315,7 +315,11 @@ trivia_questions = load_trivia_questions()
 
 # Отправка следующего вопроса
 def start_next_trivia():
-    global current_trivia, current_mask, hint_index
+    global current_trivia, current_mask, hint_index, trivia_active
+
+    if trivia_question_pending:
+        return                                             # Защита от повторного запуска
+    trivia_question_pending = False                        # Сброс
 
     if not trivia_questions:
         msg = bot.send_message(CHAT_ID, f"❌ The list of questions is empty.\n\n❌ Список вопросов пуст.")
@@ -326,33 +330,49 @@ def start_next_trivia():
     question, answer = current_trivia
     current_mask = ['-' for _ in answer]
     hint_index = 0
+    trivia_active = True
 
-    bot.send_message(CHAT_ID, f"🧠 Trivia started! {question}\n\n🧠 Викторина началась! {question}")
+    msg = bot.send_message(CHAT_ID, f"🧠 Викторина началась!\n\n\n{question}")
+    trivia_question_pending = True
+    threading.Timer(180, lambda: safe_delete_message(CHAT_ID, msg.message_id)).start()
     schedule_hint()
 
 # Подсказки
 def schedule_hint():
     global hint_timer
-    hint_timer = Timer(15, send_hint)
+    hint_timer = Timer(15, send_hint)                      # Подсказка каждые 15 секунд
     hint_timer.start()
 
 def send_hint():
-    global hint_index
+    global hint_index, current_trivia, trivia_active
+    if not trivia_active or not current_trivia:
+        return                                # Не отправляем подсказку, если викторина не активна
+
     question, answer = current_trivia
 
-    while hint_index < len(answer):
-        if current_mask[hint_index] == '-':
-            current_mask[hint_index] = answer[hint_index]
-            break
-        hint_index += 1
+    # Найдём все скрытые позиции
+    hidden_indices = [i for i, char in enumerate(current_mask) if char == '-']
 
-    bot.send_message(CHAT_ID, f"🕵️‍♂️ Hint: {''.join(current_mask)}\n\n🕵️‍♂️ Подсказка: {''.join(current_mask)}")
+    if hidden_indices:
+        # Выбираем случайный индекс
+        random_index = random.choice(hidden_indices)
+        current_mask[random_index] = answer[random_index]
 
-    if '-' in current_mask:
-        schedule_hint()
+        msg = bot.send_message(CHAT_ID, f"🕵️‍♂️ Подсказка:\n\n{''.join(current_mask)}")
+        threading.Timer(20, lambda: safe_delete_message(CHAT_ID, msg.message_id)).start()
+
+        # Планируем следующую подсказку, если есть ещё скрытые буквы
+        if '-' in current_mask:
+            schedule_hint()
+        else:
+            bot.send_message(CHAT_ID, f"❌ Никто не угадал!\n\nОтвет был: {answer}")
+            start_next_trivia()
     else:
-        bot.send_message(CHAT_ID, f"❌ No one guessed it! The answer was: {answer}\n\n❌ Никто не угадал! Ответ был: {answer}")
-        start_next_trivia()
+        # Нет скрытых букв — завершаем
+        bot.send_message(CHAT_ID, f"❌ Никто не угадал!\n\nОтвет был: {answer}")
+        trivia_active = False
+        trivia_question_pending = True
+        threading.Timer(30, start_next_trivia).start()     # Запуск следующего вопроса через 15 сек
 
 # === ЗАПУСК ВИКТОРИНЫ (только админ) ===
 @bot.message_handler(commands=['rpdao_trivia'])
@@ -362,23 +382,30 @@ def handle_trivia_start(message):
     if str(message.chat.id) != CHAT_ID:
         return
     user_id = message.from_user.id
+
+    # Получаем username без @, либо user_id
+    username = message.from_user.username if message.from_user.username else str(user_id)
+
     try:
         member = bot.get_chat_member(message.chat.id, user_id)
         if not (member.status in ['administrator', 'creator']):
             msg = bot.reply_to(message, f"⛔ Only an administrator can start a Trivia.\n\n⛔ Только администратор может запустить викторину.")
-            threading.Timer(30, lambda: safe_delete_message(CHAT_ID, msg.message_id)).start()
+            threading.Timer(10, lambda: safe_delete_message(CHAT_ID, msg.message_id)).start()
             return
     except:
         return
 
     if trivia_active:
         msg = bot.send_message(CHAT_ID, f"⚠️ The Trivia has already been launched.\n\n⚠️ Викторина уже запущена.")
-        threading.Timer(30, lambda: safe_delete_message(CHAT_ID, msg.message_id)).start()
+        threading.Timer(10, lambda: safe_delete_message(CHAT_ID, msg.message_id)).start()
         return
 
     trivia_active = True
     bot.send_message(CHAT_ID, f"🔎 The Trivia has started! Get ready to answer!\n\n🔎 Викторина запущена! Готовьтесь отвечать!")
-    start_next_trivia()
+    logging.info(f"{username} запустил Trivia")
+
+    # Старт первого вопроса через 60 секунд
+    threading.Timer(60, start_next_trivia).start()
 
 # === ОСТАНОВКА ВИКТОРИНЫ (только админ) ===
 @bot.message_handler(commands=['rpdao_trivia_off'])
@@ -388,11 +415,15 @@ def handle_trivia_stop(message):
     if str(message.chat.id) != CHAT_ID:
         return
     user_id = message.from_user.id
+
+    # Получаем username без @, либо user_id
+    username = message.from_user.username if message.from_user.username else str(user_id)
+   
     try:
         member = bot.get_chat_member(message.chat.id, user_id)
         if not (member.status in ['administrator', 'creator']):
             msg = bot.reply_to(message, f"⛔ Only an administrator can start a Trivia.\n\n⛔ Только администратор может остановить викторину.")
-            threading.Timer(30, lambda: safe_delete_message(CHAT_ID, msg.message_id)).start()
+            threading.Timer(10, lambda: safe_delete_message(CHAT_ID, msg.message_id)).start()
             return
     except:
         return
@@ -405,11 +436,14 @@ def handle_trivia_stop(message):
         hint_timer.cancel()
 
     bot.send_message(CHAT_ID, f"🛑 The Trivia has been stopped.\n\n🛑 Викторина остановлена.")
+    logging.info(f"{username} завершил Trivia")
 
 # === ОБРАБОТКА ОТВЕТОВ TRIVIA ===
 @bot.message_handler(func=lambda m: m.text and not m.text.startswith('/'), content_types=['text'])
 def handle_text_messages(message):
     global trivia_active, current_trivia, hint_timer
+    
+    logging.info(f"[ALL_MSG] Текст от {message.from_user.username or message.from_user.id}")
 
     if str(message.chat.id) != CHAT_ID:
         return
@@ -417,20 +451,32 @@ def handle_text_messages(message):
     # === 1. TRIVIA логика ===
     if trivia_active and current_trivia:
         answer = current_trivia[1].strip().lower()
-        if message.text.strip().lower() == answer:
+        user_answer = message.text.strip().lower()
+
+        if user_answer == answer:
+            # === Отключаем викторину сразу, чтобы принять только 1 ответ ===
+            trivia_active = False
+
             if hint_timer:
                 hint_timer.cancel()
+
             user_id = message.from_user.id
             display_name = message.from_user.first_name or "Игрок"
+
+            # Получаем username без @, либо user_id
+            username = message.from_user.username if message.from_user.username else str(user_id)
 
             scores[str(user_id)] = scores.get(str(user_id), 0) + 5
             save_scores(scores)
 
-            bot.send_message(CHAT_ID, f"🎉 {display_name} guessed the word '{answer}' and gets 5 $LEG!\n\n🎉 {display_name} угадал слово '{answer}' и получает 5 $LEG!")
-            logging.info(f"Победитель викторины: {message.from_user.username or message.from_user.id}, +5 очков")
+            bot.send_message(CHAT_ID, f"🎉 {display_name} угадал слово\n\n-----{answer}-----\n\nи получает 5 $LEG!")
+            logging.info(f"Победитель викторины: {username}, +5 очков")
 
-            start_next_trivia()
-            return                                                 # Остановим дальнейшую обработку
+            # Запуск следующего вопроса через 15 секунд
+            global trivia_question_pending
+            trivia_question_pending = True
+            threading.Timer(15, start_next_trivia).start()
+            return                                         # ❗ Не продолжаем дальше    
 
     # === 2. Пересылка текста в Discord ===
 	# Обработка обычных текстовых сообщений (не команд)
