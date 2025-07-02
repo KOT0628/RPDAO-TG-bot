@@ -212,7 +212,6 @@ def create_greeting_image(text, background_file, output_file):
 # ==== ПЕРЕСЫЛКА В DISCORD ====
 # Пересылка текстового сообщения
 def send_to_discord(text, username="RPDAO Telegram", avatar_url=None):
-    logging.info(f"[DC] Отправка текста в Discord: {text}")
     if not DISCORD_WEBHOOK_URL:
         logging.warning("DISCORD_WEBHOOK_URL не задан")
         return
@@ -230,7 +229,6 @@ def send_to_discord(text, username="RPDAO Telegram", avatar_url=None):
 
 # Пересылка фото с подписью
 def send_photo_to_discord(caption, photo_path, username=None, avatar_url=None):
-    logging.info(f"[DC] Отправка фото в Discord с подписью: {caption}")
     try:
         webhook = DiscordWebhook(
             url=DISCORD_WEBHOOK_URL,
