@@ -4,20 +4,21 @@ import sys
 import psutil
 import random
 import requests
+from requests.exceptions import ReadTimeout
 from PIL import Image, ImageDraw, ImageFont
 import datetime
 import time
 import telebot
-from requests.exceptions import ReadTimeout
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from telebot.types import Message
+from telebot.apihelper import ApiTelegramException
 from collections import defaultdict
-from threading import Timer
 from discord_webhook import DiscordWebhook
 from dotenv import load_dotenv
 import schedule
 import logging
 import threading
+from threading import Timer
 import json
 import tempfile
 import uuid
@@ -260,8 +261,13 @@ def send_photo_to_discord(caption, photo_path, username=None, avatar_url=None):
 def safe_delete_message(chat_id, message_id):
     try:
         bot.delete_message(chat_id, message_id)
+    except ApiTelegramException as e:
+        if "message to delete not found" in str(e):
+            logging.debug(f"Сообщение {message_id} уже удалено.")
+        else:
+            logging.warning(f"Не удалось удалить сообщение {message_id} из чата {chat_id}: {e}")
     except Exception as e:
-        logging.warning(f"Не удалось удалить сообщение {message_id} из чата {chat_id}: {e}")
+        logging.warning(f"Ошибка при удалении сообщения {message_id} из чата {chat_id}: {e}")
 
 # ==== ОТПРАВКА ИЗОБРАЖЕНИЯ ====
 def send_price_image():
@@ -918,10 +924,12 @@ def escape_md(text):
 @bot.message_handler(commands=['score'])
 @delete_command_after
 def handle_score_command(message):
-    show_score_page(message.chat.id, page=0, reply_to=message.message_id)
+    username = message.from_user.username or message.from_user.first_name or str(message.from_user.id)
+    show_score_page(message.chat.id, page=0, reply_to=message.message_id, username=username)
 
 # Общая функция отображения страницы лидерборда
-def show_score_page(chat_id, page=0, reply_to=None):
+def show_score_page(chat_id, page=0, reply_to=None, username="unknown"):
+
     per_page = 10
     sorted_scores = sorted(scores.items(), key=lambda x: x[1], reverse=True)
 
@@ -988,7 +996,7 @@ def show_score_page(chat_id, page=0, reply_to=None):
 
         msg = bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=markup, reply_to_message_id=reply_to)
         threading.Timer(300, lambda: safe_delete_message(chat_id, msg.message_id)).start()
-        logging.info(f"{user.username} использует команду /score")
+        logging.info(f"{username} использует команду /score")
 
     except Exception as e:
         logging.error(f"Ошибка в /score: {e}")
@@ -1112,12 +1120,17 @@ logging.info("Бот запущен.")
 # Поток для schedule
 threading.Thread(target=run_scheduler, daemon=True).start()
 
-# Основной поток - polling
-try:
-    bot.remove_webhook()
-    bot.polling(none_stop=True, timeout=60, long_polling_timeout=60)
-finally:
-    # Удаляем lock-файл при завершении
-    if os.path.exists(LOCK_FILE):
-        os.remove(LOCK_FILE)
-        logging.info("Lock-файл удалён. Бот завершил работу.")
+# Основной поток - polling с автоматическим перезапуском
+while True:
+    try:
+        bot.remove_webhook()
+        logging.info("Стартуем polling...")
+        bot.polling(none_stop=True, timeout=60, long_polling_timeout=60)
+    except Exception as e:
+        logging.error(f"[POLLING ERROR] {e}")
+        time.sleep(15)                               # Подождать 15 секунд перед повтором
+    finally:
+        # Удаляем lock-файл при аварийном завершении
+        if os.path.exists(LOCK_FILE):
+            os.remove(LOCK_FILE)
+            logging.info("Lock-файл удалён. Бот завершил работу.")
