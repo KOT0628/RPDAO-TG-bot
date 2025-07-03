@@ -951,11 +951,12 @@ def show_score_page(chat_id, page=0, reply_to=None):
             try:
                 user = bot.get_chat_member(chat_id, int(user_id)).user
                 name = f"@{user.username}" if user.username else user.first_name
-                display_name = message.from_user.first_name or "Игрок"
+                display_name = user.first_name or f"ID:{user_id}"
             except:
                 name = f"ID:{user_id}"
+                display_name = f"ID:{user_id}"
 
-            rows.append((place, name, f"{points} $LEG"))
+            rows.append((place, display_name, f"{points} $LEG"))
 
         # Вычисляем максимальные ширины
         col1 = max(len(r[0]) for r in rows)
@@ -967,7 +968,7 @@ def show_score_page(chat_id, page=0, reply_to=None):
         lines.append("#".ljust(col1) + " | " + "Purtorican".ljust(col2) + " | " + "Score".rjust(col3))
         lines.append("-" * (col1 + col2 + col3 + 6))
         for place, name, score in rows:
-            line = place.ljust(col1) + " | " + display_name.ljust(col2) + " | " + score.rjust(col3)
+            line = place.ljust(col1) + " | " + name.ljust(col2) + " | " + score.rjust(col3)
             lines.append(line)
 
         text = "*🏆 Top players:*\n\n```" + "\n".join(lines) + "```"
