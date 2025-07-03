@@ -951,6 +951,7 @@ def show_score_page(chat_id, page=0, reply_to=None):
             try:
                 user = bot.get_chat_member(chat_id, int(user_id)).user
                 name = f"@{user.username}" if user.username else user.first_name
+                display_name = message.from_user.first_name or "Игрок"
             except:
                 name = f"ID:{user_id}"
 
@@ -963,10 +964,10 @@ def show_score_page(chat_id, page=0, reply_to=None):
 
         # Строим таблицу
         lines = []
-        lines.append("№".ljust(col1) + " | " + "Player".ljust(col2) + " | " + "Score".rjust(col3))
+        lines.append("#".ljust(col1) + " | " + "Purtorican".ljust(col2) + " | " + "Score".rjust(col3))
         lines.append("-" * (col1 + col2 + col3 + 6))
         for place, name, score in rows:
-            line = place.ljust(col1) + " | " + name.ljust(col2) + " | " + score.rjust(col3)
+            line = place.ljust(col1) + " | " + display_name.ljust(col2) + " | " + score.rjust(col3)
             lines.append(line)
 
         text = "*🏆 Top players:*\n\n```" + "\n".join(lines) + "```"
