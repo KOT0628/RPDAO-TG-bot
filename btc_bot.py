@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import psutil
 import random
@@ -8,6 +9,7 @@ import datetime
 import time
 import telebot
 from requests.exceptions import ReadTimeout
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from telebot.types import Message
 from collections import defaultdict
 from threading import Timer
@@ -109,6 +111,12 @@ with open(LOCK_FILE, "w") as f:
 
 # Инициализируем клиента
 bot = telebot.TeleBot(TOKEN)
+
+# === ФУНКЦИЯ ДЛЯ ФИЛЬТРАЦИИ СТАРЫХ СООБЩЕНИЙ ===
+def is_recent(message):
+    now = datetime.datetime.utcnow()
+    msg_time = datetime.datetime.utcfromtimestamp(message.date)
+    return (now - msg_time).total_seconds() < 30           # Не обрабатывать сообщения старше 30 секунд
 
 # ==== ПОЛУЧЕНИЕ ЦЕНЫ ====
 def get_btc_price():
@@ -443,6 +451,11 @@ def handle_trivia_stop(message):
 def handle_text_messages(message):
     global trivia_active, current_trivia, hint_timer
     
+    # Пропускаем старые сообщения (например, после запуска бота)
+    if not is_recent(message):
+        logging.info(f"[SKIP] Старое текстовое сообщение пропущено: {message.text}")
+        return
+
     logging.info(f"[ALL_MSG] Текст от {message.from_user.username or message.from_user.id}")
 
     if str(message.chat.id) != CHAT_ID:
@@ -897,32 +910,96 @@ def handle_reroll_command(message):
         logging.error(f"Ошибка в /reroll: {e}")
 
 # ==== ОБРАБОТЧИК КОМАНДЫ /score ====
+def escape_md(text):
+    """Экранирует спецсимволы MarkdownV2"""
+    return re.sub(r'([_\*\[\]\(\)~`>#+\-=|{}.!\\])', r'\\\1', str(text))
+
+# Показать лидерборд (с пагинацией)
 @bot.message_handler(commands=['score'])
 @delete_command_after
 def handle_score_command(message):
+    show_score_page(message.chat.id, page=0, reply_to=message.message_id)
+
+# Общая функция отображения страницы лидерборда
+def show_score_page(chat_id, page=0, reply_to=None):
+    per_page = 10
+    sorted_scores = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+
+    start = page * per_page
+    end = start + per_page
+    page_scores = sorted_scores[start:end]
+
     try:
-        if not scores:
-            msg = bot.reply_to(message, f"🏆 There are no winners yet.")
+        if not page_scores:
+            msg = bot.send_message(chat_id, "🏆 There are no winners yet.")
             threading.Timer(30, lambda: safe_delete_message(message.chat.id, msg.message_id)).start()
             return
 
-        # Сортировка по убыванию очков
-        sorted_scores = sorted(scores.items(), key=lambda x: x[1], reverse=True)
-        top = sorted_scores[:10]
+        rows = []
 
-        text = "🏆 Top players:\n\n"
-        for i, (user_id, points) in enumerate(top, 1):
+        # Эмодзи для топ-3
+        for i, (user_id, points) in enumerate(page_scores, start=1 + start):
+            if i == 1:
+                place = "🥇"
+            elif i == 2:
+                place = "🥈"
+            elif i == 3:
+                place = "🥉"
+            else:
+                place = f"{i}."
+
             try:
-                user = bot.get_chat_member(message.chat.id, int(user_id)).user
-                name = user.first_name or f"ID:{user_id}"
+                user = bot.get_chat_member(chat_id, int(user_id)).user
+                name = f"@{user.username}" if user.username else user.first_name
             except:
                 name = f"ID:{user_id}"
-            text += f"{i}. {name} - {points} $LEG\n"
 
-        msg = bot.reply_to(message, text)
-        threading.Timer(180, lambda: safe_delete_message(message.chat.id, msg.message_id)).start()
+            rows.append((place, name, f"{points} $LEG"))
+
+        # Вычисляем максимальные ширины
+        col1 = max(len(r[0]) for r in rows)
+        col2 = max(len(r[1]) for r in rows)
+        col3 = max(len(r[2]) for r in rows)
+
+        # Строим таблицу
+        lines = []
+        lines.append("№".ljust(col1) + " | " + "Player".ljust(col2) + " | " + "Score".rjust(col3))
+        lines.append("-" * (col1 + col2 + col3 + 6))
+        for place, name, score in rows:
+            line = place.ljust(col1) + " | " + name.ljust(col2) + " | " + score.rjust(col3)
+            lines.append(line)
+
+        text = "*🏆 Top players:*\n\n```" + "\n".join(lines) + "```"
+
+        # Кнопки: Назад | В начало | Вперёд
+        buttons = []
+        if page > 0:
+            buttons.append(InlineKeyboardButton("⬅️ Назад", callback_data=f"score_{page-1}"))
+        if page > 1:
+            buttons.append(InlineKeyboardButton("⏮️ В начало", callback_data="score_0"))
+        if end < len(sorted_scores):
+            buttons.append(InlineKeyboardButton("➡️ Далее", callback_data=f"score_{page+1}"))
+
+        markup = InlineKeyboardMarkup()
+        if buttons:
+            markup.row(*buttons)
+
+        msg = bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=markup, reply_to_message_id=reply_to)
+        threading.Timer(300, lambda: safe_delete_message(chat_id, msg.message_id)).start()
+        logging.info(f"{user.username} использует команду /score")
+
     except Exception as e:
         logging.error(f"Ошибка в /score: {e}")
+
+# Обработка кнопок
+@bot.callback_query_handler(func=lambda call: call.data.startswith("score_"))
+def handle_score_pagination(call: CallbackQuery):
+    try:
+        page = int(call.data.split("_")[1])
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+        show_score_page(call.message.chat.id, page)
+    except Exception as e:
+        logging.error(f"Ошибка в пагинации лидерборда: {e}")
 
 # ==== СОЗДАЁМ СПИСОК ФРАЗ ====
 GOOD_MORNING_PHRASES = [
@@ -973,6 +1050,11 @@ def handle_gn_command(message):
 # Обработка фото
 @bot.message_handler(content_types=['photo'])
 def handle_photo_message(message):
+
+    # Пропускаем старые фото (например, после запуска бота)
+    if not is_recent(message):
+        logging.info("[SKIP] Старое фото сообщение пропущено.")
+        return
 
     if str(message.chat.id) != CHAT_ID:
         return
